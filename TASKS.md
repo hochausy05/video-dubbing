@@ -10,9 +10,9 @@
 ## Current Task
 
 - **Phase:** 2 — FastAPI and React foundations
-- **Task:** `ENV-01` — Bootstrap minimal FastAPI
-- **Next after verified completion:** `ENV-02`
-- **Scope:** Create a locally runnable API health endpoint with a reproducible check. Do not add AI/video integrations.
+- **Task:** `ENV-02` — Bootstrap React, TypeScript, and Vite
+- **Next after verified completion:** `ENV-03`
+- **Scope:** Create a locally runnable welcome page and verify the production build.
 
 ## Phase 1 — Documents and environment
 
@@ -25,7 +25,7 @@
 
 ## Phase 2 — FastAPI and React foundations
 
-- [ ] `ENV-01` — Bootstrap minimal FastAPI. Complete when a local health endpoint works and a test or reproducible check passes.
+- [x] `ENV-01` — Bootstrap minimal FastAPI. Complete when a local health endpoint works and a test or reproducible check passes.
 - [ ] `ENV-02` — Bootstrap React, TypeScript, and Vite. Complete when the welcome page runs and the production build passes.
 - [ ] `ENV-03` — Pin dependencies and add secret-free example configuration. Complete when tested setup instructions are documented.
 
@@ -88,4 +88,3 @@
 - [ ] Batch/concurrent processing, advanced timeline editing, or public Internet deployment.
 
 Do not implement backlog items without explicit approval.
-

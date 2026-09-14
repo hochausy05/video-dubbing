@@ -32,3 +32,11 @@
 - **Verification:** Developer reported about 27 GB free on drive D.
 - **Result/limits:** Disk prerequisite accepted. No virtual environment, dependencies, models, or application code were created in this task.
 
+## `ENV-01` — Bootstrap minimal FastAPI
+
+- **AI assistance:** Implemented a minimal FastAPI application and a JSON health endpoint.
+- **Developer decision:** Use the selected Python 3.11 interpreter with an ignored local virtual environment; defer dependency pinning and all non-health API work to later tasks.
+- **Affected areas:** `backend/app/main.py` and task completion records.
+- **Verification:** Started Uvicorn with `app.main:app` and called `GET http://127.0.0.1:8000/health`; received HTTP 200 with `{"status":"ok"}`.
+- **Result/limits:** ENV-01 is complete; no frontend, database, worker, AI, or media-pipeline functionality was added.
+- **Commit/issue:** None recorded by the AI assistant.
