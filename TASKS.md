@@ -9,10 +9,10 @@
 
 ## Current Task
 
-- **Phase:** 2 — FastAPI and React foundations
-- **Task:** `ENV-03` — Pin dependencies and add secret-free example configuration
-- **Next after verified completion:** `DATA-01`
-- **Scope:** Add tested dependency and local setup instructions without committing secrets.
+- **Phase:** 3 — SQLite, projects, and upload
+- **Task:** `DATA-01`
+- **Next after verified completion:** See the Phase 3 task list.
+- **Scope:** See the `DATA-01` task entry below.
 
 ## Phase 1 — Documents and environment
 
@@ -27,7 +27,7 @@
 
 - [x] `ENV-01` — Bootstrap minimal FastAPI. Complete when a local health endpoint works and a test or reproducible check passes.
 - [x] `ENV-02` — Bootstrap React, TypeScript, and Vite. Complete when the welcome page runs and the production build passes.
-- [ ] `ENV-03` — Pin dependencies and add secret-free example configuration. Complete when tested setup instructions are documented.
+- [x] `ENV-03` — Pin dependencies and add secret-free example configuration. Complete when tested setup instructions are documented.
 
 ## Phase 3 — SQLite, projects, and upload
 

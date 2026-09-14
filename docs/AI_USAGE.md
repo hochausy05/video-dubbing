@@ -49,3 +49,12 @@
 - **Verification:** `npm run build` passed; Vite served `http://127.0.0.1:5173/` and a local HTTP request returned 200 with `AutoDub` present.
 - **Result/limits:** ENV-02 is complete; package/development configuration hardening remains for ENV-03.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `ENV-03` — Dependencies and safe example configuration
+
+- **AI assistance:** Added the verified direct backend dependency pins, safe environment template, and reproducible Windows setup instructions.
+- **Developer decision:** Keep only FastAPI and Uvicorn in the backend requirements; retain the existing frontend package manifest and lockfile as its dependency source of truth; add no runtime configuration library.
+- **Affected areas:** `backend/requirements.txt`, `.env.example`, `README.md`, and task completion records.
+- **Verification:** Python 3.11 created/refreshed the backend virtual environment and installed requirements; FastAPI returned HTTP 200 at `/health`; `npm ci` and `npm run build` passed; Vite returned HTTP 200 with `AutoDub`; `.env` was ignored while `.env.example` remained trackable. A stale Vite process was stopped before the successful `npm ci` retry.
+- **Result/limits:** ENV-03 is complete. No secrets, API integration, database, worker, or media functionality was added.
+- **Commit/issue:** None recorded by the AI assistant.

@@ -6,8 +6,8 @@ AutoDub is a local-first web application that translates spoken video content in
 
 ## Current snapshot
 
-- Current task: `ENV-01` — bootstrap a minimal FastAPI backend.
-- Completed foundations: project documents, repository placeholders, MVP scope, machine review, and disk-space check.
+- Current task: see `TASKS.md`.
+- Completed foundations: project documents, repository placeholders, MVP scope, machine review, disk-space check, a FastAPI health endpoint, and a React/Vite welcome page.
 - Runtime features are planned unless `TASKS.md` marks them complete with evidence.
 - The project is on drive D with about 27 GB free; keep roughly 10 GB free during development.
 
@@ -41,6 +41,44 @@ Detailed behavior and acceptance criteria live in `docs/PRD.md`.
 | Video processing | FFmpeg and ffprobe |
 
 Versions and commands are added only after they are tested. Redis/RQ is not required for the MVP.
+
+## Local setup (Windows PowerShell)
+
+Prerequisites: Python 3.11 (not the system Python 3.14), Node.js 22.19.0, and npm 11.6.0. Run these commands from the repository root.
+
+### Backend
+
+```powershell
+py -3.11 -m venv backend\.venv
+.\backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
+```
+
+In another PowerShell window, verify the API:
+
+```powershell
+Invoke-WebRequest -Uri 'http://127.0.0.1:8000/health' -UseBasicParsing
+```
+
+The response must have HTTP status 200 and body `{"status":"ok"}`.
+
+### Frontend
+
+```powershell
+Set-Location frontend
+npm ci
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+In another PowerShell window, verify the page:
+
+```powershell
+Invoke-WebRequest -Uri 'http://127.0.0.1:5173/' -UseBasicParsing
+```
+
+The response must have HTTP status 200. Run `npm run build` from `frontend/` to create the production build.
+
+No environment variables are required yet. `.env` files remain untracked; `.env.example` is a safe placeholder for future documented local configuration.
 
 ## Repository map
 
