@@ -40,3 +40,12 @@
 - **Verification:** Started Uvicorn with `app.main:app` and called `GET http://127.0.0.1:8000/health`; received HTTP 200 with `{"status":"ok"}`.
 - **Result/limits:** ENV-01 is complete; no frontend, database, worker, AI, or media-pipeline functionality was added.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `ENV-02` — Bootstrap minimal React, TypeScript, and Vite
+
+- **AI assistance:** Initialized the minimal React/TypeScript/Vite configuration and welcome page.
+- **Developer decision:** Keep the existing frontend placeholder directories and add no routing, API integration, state management, or UI framework.
+- **Affected areas:** `frontend/` bootstrap files and task completion records.
+- **Verification:** `npm run build` passed; Vite served `http://127.0.0.1:5173/` and a local HTTP request returned 200 with `AutoDub` present.
+- **Result/limits:** ENV-02 is complete; package/development configuration hardening remains for ENV-03.
+- **Commit/issue:** None recorded by the AI assistant.
