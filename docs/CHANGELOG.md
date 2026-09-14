@@ -103,3 +103,11 @@
 - **Tệp:** `TASKS.md`, `docs/ENVIRONMENT.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Tạo và commit một Project, Job, Segment, Artifact liên kết; đóng engine/session rồi đọc lại bằng engine/session mới; xác nhận UUID, timestamp có múi giờ, khóa ngoại, quan hệ và constraint trạng thái/thời lượng. Xóa Project kiểm chứng cùng toàn bộ bản ghi con do cascade; không drop bảng. `compileall`, `pip check`, `git diff --check` thành công; `.env` bị Git bỏ qua và bí mật không xuất hiện trong diff.
 - **Còn lại:** Không.
+
+## 2026-09-15 — UPLOAD-01: Upload video do máy chủ kiểm soát
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Thêm endpoint multipart tạo Project bằng UUID trên server, lưu video dưới đường dẫn cục bộ cố định theo UUID và chỉ lưu tham chiếu tương đối trong PostgreSQL. Xóa file vừa ghi nếu persistence thất bại.
+- **Tệp:** `backend/app/main.py`, `backend/app/api/projects.py`, `backend/app/services/uploads.py`, `backend/app/core/config.py`, `backend/requirements.txt`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Upload HTTP thật một MP4 nhỏ và một upload có filename traversal đều nhận HTTP 201; metadata Project được xác nhận lại bằng kết nối Supabase mới, file nằm trong thư mục UUID do server tạo và không có đường dẫn tuyệt đối. Đã xóa hai Project, file upload và fixture kiểm chứng. `compileall`, `pip check`, `git diff --check` thành công; `.env` và runtime storage bị Git bỏ qua.
+- **Còn lại:** Không.

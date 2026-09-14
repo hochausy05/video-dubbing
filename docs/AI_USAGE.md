@@ -96,3 +96,12 @@
 - **Verification:** Initialized the four metadata tables idempotently; committed one connected Project/Job/Segment/Artifact dataset; disposed the engine; read it back through a new engine/session; confirmed UUIDs, timezone-aware timestamps, relationships, foreign keys, and status/time constraints; then deleted only the verification project and cascade-owned children.
 - **Result/limits:** DATA-01 is complete. No API, frontend, worker, Auth, Storage, Realtime, RLS, or media-binary capability was added.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `UPLOAD-01` — Server-controlled video upload
+
+- **AI assistance:** Implemented the minimal FastAPI multipart upload route and backend storage service using the existing SQLAlchemy/Supabase persistence layer.
+- **Developer decision:** Use `storage/projects/<project UUID>/source/video.mp4` as a fixed server-only path; retain no client filename, expose only a relative storage reference, and compensate by deleting the new file when database persistence fails.
+- **Affected areas:** `backend/app/api/projects.py`, `backend/app/services/uploads.py`, router/config wiring, `python-multipart`, and task records.
+- **Verification:** Generated a small local MP4 and submitted normal plus traversal-style filename uploads over HTTP. Both returned 201, persisted through a new Supabase connection, used UUID-controlled relative paths, and were removed with their verification files.
+- **Result/limits:** UPLOAD-01 is complete. MIME/type, size, duration, and corruption validation remain explicitly deferred to UPLOAD-02.
+- **Commit/issue:** None recorded by the AI assistant.

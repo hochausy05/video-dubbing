@@ -11,10 +11,18 @@ from dotenv import load_dotenv
 DATABASE_URL_ENV = "DATABASE_URL"
 
 
+def get_repository_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
 def load_local_environment() -> None:
     """Load the repository-local ignored .env file without replacing OS variables."""
-    repository_root = Path(__file__).resolve().parents[3]
-    load_dotenv(repository_root / ".env", override=False)
+    load_dotenv(get_repository_root() / ".env", override=False)
+
+
+def get_storage_root() -> Path:
+    """Return the server-managed runtime storage root."""
+    return get_repository_root() / "storage"
 
 
 def get_database_url() -> str:
