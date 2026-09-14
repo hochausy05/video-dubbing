@@ -63,3 +63,43 @@
 - **Tệp:** `backend/requirements.txt`, `.env.example`, `README.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Chạy `py -3.11 -m venv backend\.venv` và `pip install -r backend\requirements.txt`; FastAPI trả HTTP 200 với `{"status":"ok"}`. `npm ci` và `npm run build` hoàn tất; Vite trả HTTP 200 với nội dung `AutoDub`. Đã xác nhận `.env` bị bỏ qua còn `.env.example` không bị bỏ qua.
 - **Còn lại:** Không.
+
+## 2026-09-15 — DATA-01: Chuyển định hướng lưu trữ sang Supabase PostgreSQL
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Cập nhật tài liệu để Supabase-hosted PostgreSQL thay SQLite cho metadata; quy định FastAPI là lớp truy cập duy nhất, SQLAlchemy với PostgreSQL driver, `DATABASE_URL` chỉ từ môi trường, UUID và timestamp có múi giờ. Nội dung tệp media vẫn ở storage do máy chủ quản lý; Auth, Storage, Realtime và RLS của Supabase chưa thuộc phạm vi hiện tại.
+- **Tệp:** `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/PRD.md`, `docs/ENVIRONMENT.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Đối chiếu các tài liệu liên quan với quyết định lưu trữ mới; không triển khai mã, schema hoặc kết nối cơ sở dữ liệu.
+- **Còn lại:** Cài đặt driver, cấu hình `DATABASE_URL`, tạo schema và kiểm chứng persistence trong phần triển khai DATA-01.
+
+## 2026-09-15 — DATA-01: Bổ sung nhất quán tài liệu kế hoạch
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Bổ sung `README.md` và `PLAN.md` để Phase 3 và bảng công nghệ cùng chỉ Supabase-hosted PostgreSQL cho metadata, còn tệp media do backend-managed local storage quản lý.
+- **Tệp:** `README.md`, `PLAN.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Tìm kiếm toàn bộ tài liệu hoạt động cho thấy không còn chỉ dẫn SQLite đang hiệu lực ngoài các bản ghi lịch sử/audit được giữ nguyên.
+- **Còn lại:** Cài đặt driver, cấu hình `DATABASE_URL`, tạo schema và kiểm chứng persistence trong phần triển khai DATA-01.
+
+## 2026-09-15 — DATA-01: Nền tảng persistence PostgreSQL
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm model SQLAlchemy cho Project, Job, Segment và Artifact cùng quan hệ khóa ngoại, UUID, timestamp có múi giờ, ràng buộc trạng thái/thứ tự/thời lượng và cơ chế khởi tạo bảng idempotent không xóa dữ liệu. Thêm cấu hình `DATABASE_URL` từ `.env` cục bộ và các dependency PostgreSQL cần thiết.
+- **Tệp:** `.env.example`, `backend/requirements.txt`, `backend/app/core/config.py`, `backend/app/core/database.py`, `backend/app/models/__init__.py`, `backend/app/models/base.py`, `backend/app/models/entities.py`, `docs/ARCHITECTURE.md`, `docs/ENVIRONMENT.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** `pip install -r backend\\requirements.txt` cài SQLAlchemy 2.0.52, psycopg 3.3.5 và python-dotenv 1.2.3; `compileall` và kiểm tra metadata model thành công. `.env` bị Git bỏ qua, `.env.example` không bị bỏ qua. Khởi tạo thật dừng trước khi kết nối vì `DATABASE_URL` chưa được cấu hình.
+- **Còn lại:** Cần `DATABASE_URL` Supabase thật để tạo bảng, ghi/đọc lại bộ dữ liệu qua kết nối mới và dọn chỉ các bản ghi kiểm chứng trước khi có thể hoàn thành DATA-01.
+
+## 2026-09-15 — DATA-01: Kiểm chứng Supabase PostgreSQL
+
+- **Trạng thái:** Bị chặn
+- **Thay đổi:** Không thay đổi schema hoặc dữ liệu từ lần kiểm chứng này.
+- **Tệp:** `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Kết nối SQLAlchemy/psycopg đã tới Supabase nhưng bị từ chối xác thực mật khẩu trước khi khởi tạo bảng. Kiểm tra bổ sung qua Supabase cho thấy dự án đang hoạt động và chưa có bảng trong schema `public`.
+- **Còn lại:** Cập nhật `DATABASE_URL` cục bộ với thông tin xác thực hợp lệ, sau đó chạy lại khởi tạo, kiểm chứng ghi/đọc sau kết nối mới và dọn dữ liệu kiểm chứng.
+
+## 2026-09-15 — DATA-01: Hoàn tất kiểm chứng persistence Supabase
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Hoàn tất khởi tạo idempotent các bảng metadata và kiểm chứng persistence qua kết nối SQLAlchemy/psycopg thực tới Supabase PostgreSQL.
+- **Tệp:** `TASKS.md`, `docs/ENVIRONMENT.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Tạo và commit một Project, Job, Segment, Artifact liên kết; đóng engine/session rồi đọc lại bằng engine/session mới; xác nhận UUID, timestamp có múi giờ, khóa ngoại, quan hệ và constraint trạng thái/thời lượng. Xóa Project kiểm chứng cùng toàn bộ bản ghi con do cascade; không drop bảng. `compileall`, `pip check`, `git diff --check` thành công; `.env` bị Git bỏ qua và bí mật không xuất hiện trong diff.
+- **Còn lại:** Không.

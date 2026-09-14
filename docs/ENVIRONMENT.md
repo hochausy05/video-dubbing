@@ -30,6 +30,7 @@ This file records facts verified during `INIT-04` and `ENV-00` plus explicit env
 - Start Whisper evaluation with model `small`.
 - Prefer `h264_nvenc` when verified at render time; keep a CPU fallback.
 - Keep the project on drive D and maintain about 10 GB free during development.
+- For `DATA-01`, use Supabase-hosted PostgreSQL through SQLAlchemy and a PostgreSQL driver. Supply its `DATABASE_URL` through uncommitted backend/worker environment configuration only.
 
 ## Ready for upcoming tasks
 
@@ -44,8 +45,8 @@ This file records facts verified during `INIT-04` and `ENV-00` plus explicit env
 - faster-whisper/Whisper has not run on the GPU; GPU support must not be claimed before `ASR-01` evidence.
 - Gemini, Edge-TTS, media limits, and end-to-end performance remain unverified.
 - Detected NVENC support does not prove every render command will succeed.
+- Supabase connection and DATA-01 persistence verification completed using the ignored local `DATABASE_URL`; future environment or credential changes require a fresh connection check.
 
 ## Resource guardrail
 
 Monitor drive D before model downloads and media processing. Intermediate audio/video can multiply source size. Stop and free targeted, known-safe data if available capacity approaches the 10 GB reserve; never use broad cleanup commands.
-

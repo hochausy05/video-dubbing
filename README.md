@@ -34,7 +34,7 @@ Detailed behavior and acceptance criteria live in `docs/PRD.md`.
 | Frontend | React, TypeScript, Vite |
 | API | Python 3.11, FastAPI |
 | Background processing | Separate Python worker; one job at a time |
-| Persistence | SQLite plus backend-managed local storage |
+| Persistence | Supabase-hosted PostgreSQL for metadata plus backend-managed local storage for media files |
 | Speech recognition | faster-whisper, starting with model `small` |
 | Translation | Gemini through the Google Gen AI SDK |
 | Speech generation | Edge-TTS, subject to integration testing |

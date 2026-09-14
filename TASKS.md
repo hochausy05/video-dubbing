@@ -9,7 +9,7 @@
 
 ## Current Task
 
-- **Phase:** 3 — SQLite, projects, and upload
+- **Phase:** 3 — Supabase PostgreSQL, projects, and upload
 - **Task:** `DATA-01`
 - **Next after verified completion:** See the Phase 3 task list.
 - **Scope:** See the `DATA-01` task entry below.
@@ -29,9 +29,9 @@
 - [x] `ENV-02` — Bootstrap React, TypeScript, and Vite. Complete when the welcome page runs and the production build passes.
 - [x] `ENV-03` — Pin dependencies and add secret-free example configuration. Complete when tested setup instructions are documented.
 
-## Phase 3 — SQLite, projects, and upload
+## Phase 3 — Supabase PostgreSQL, projects, and upload
 
-- [ ] `DATA-01` — Implement `Project`, `Job`, `Segment`, and `Artifact` persistence. Verify data survives application restart.
+- [x] `DATA-01` — Implement `Project`, `Job`, `Segment`, and `Artifact` metadata persistence in Supabase-hosted PostgreSQL through FastAPI, using SQLAlchemy and a PostgreSQL driver. Configure the connection only through uncommitted `DATABASE_URL`; use UUID identifiers and timezone-aware timestamps where appropriate. Verified table initialization, connected-record persistence after a new engine/session, foreign-key relationships, constraints, and cleanup through the application connection.
 - [ ] `UPLOAD-01` — Store uploaded video under server-generated IDs. Verify valid upload and hostile/unusual filenames cannot control storage paths.
 - [ ] `UPLOAD-02` — Validate actual format, configured size, and duration. Verify corrupt, unsupported, and over-limit input is rejected clearly.
 - [ ] `UI-01` — Connect project list/create/upload UI to the API. Verify projects persist across browser refresh.

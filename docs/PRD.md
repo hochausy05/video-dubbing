@@ -82,6 +82,7 @@ Use only a tested Vietnamese voice and the confirmed revision. Validate per-segm
 | `NFR-06` | Require reproducible real evidence before completing functional tasks; label mocks. |
 | `NFR-07` | Make no performance promise before measurement on the demo machine; CPU fallback required. |
 | `NFR-08` | Preserve component boundaries; avoid unnecessary services/abstractions. |
+| `NFR-09` | Persist application metadata in Supabase-hosted PostgreSQL through FastAPI; React must not access application tables directly, file contents remain outside PostgreSQL, and `DATABASE_URL` is environment-only. |
 
 ## 7. MVP exclusions
 
@@ -91,6 +92,7 @@ Use only a tested Vietnamese voice and the confirmed revision. Validate per-segm
 - Voice cloning, lip sync, subtitle OCR, advanced voice/music separation.
 - Batch/concurrent video processing or advanced timeline editing.
 - Unmeasured guarantees for translation quality, voice quality, or processing time.
+- Supabase Auth, Storage, Realtime, and RLS.
 
 ## 8. MVP acceptance
 
@@ -109,4 +111,3 @@ The MVP is accepted only after one permitted sample demonstrates:
 - Verify faster-whisper GPU compatibility on the recorded machine; CPU is fallback.
 - Test provisional 3-minute/100-MB limits and measure actual stage performance.
 - Verify Edge-TTS voice availability/behavior and actual NVENC render commands.
-

@@ -18,7 +18,7 @@ This file defines phase order and exit gates. It does not track completion; use 
 | --- | --- | --- |
 | 1 | Documents and environment | Consistent scope/architecture plus recorded machine and tooling checks |
 | 2 | FastAPI and React foundations | Local API health check and a buildable basic UI |
-| 3 | SQLite, projects, and upload | Persistent projects plus safe validation/storage of accepted videos |
+| 3 | Supabase PostgreSQL, projects, and upload | Persistent metadata in Supabase PostgreSQL plus safe validation/storage of accepted videos |
 | 4 | Jobs and worker | API returns a job ID; a separate worker processes one queued job; status survives reload/restart policy |
 | 5 | Whisper transcript | A permitted sample produces valid segments and timestamps |
 | 6 | Gemini and translation review | Segment translation is editable, persisted, revisioned, and confirmable |
@@ -50,4 +50,3 @@ This file defines phase order and exit gates. It does not track completion; use 
 | Speech exceeds segment duration | Measure and warn; never truncate a sentence silently |
 | Large media exhausts disk/RAM | Enforce input limits, run one worker, isolate project/job files, monitor free space |
 | Scope expansion | Complete the MVP first; keep excluded features in backlog |
-

@@ -58,3 +58,41 @@
 - **Verification:** Python 3.11 created/refreshed the backend virtual environment and installed requirements; FastAPI returned HTTP 200 at `/health`; `npm ci` and `npm run build` passed; Vite returned HTTP 200 with `AutoDub`; `.env` was ignored while `.env.example` remained trackable. A stale Vite process was stopped before the successful `npm ci` retry.
 - **Result/limits:** ENV-03 is complete. No secrets, API integration, database, worker, or media functionality was added.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `DATA-01` — Document Supabase PostgreSQL persistence decision
+
+- **AI assistance:** Updated the database-related task, architecture, product, and environment documentation to replace the planned SQLite layer with Supabase-hosted PostgreSQL.
+- **Developer decision:** Keep FastAPI as the only application backend; use SQLAlchemy with a PostgreSQL driver and an uncommitted `DATABASE_URL`; keep React away from application tables and media file contents outside PostgreSQL. Defer Supabase Auth, Storage, Realtime, and RLS.
+- **Affected areas:** `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/PRD.md`, and `docs/ENVIRONMENT.md`.
+- **Verification:** Reviewed the revised database references and documentation consistency; no application code, schema, dependency, or database connection was created or tested.
+- **Result/limits:** Documentation is ready to guide DATA-01 implementation. Connection configuration, driver installation, schema creation, and persistence verification remain outstanding.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `DATA-01` — Documentation consistency supplement
+
+- **AI assistance:** Updated the active README stack summary and Phase 3 plan label after the consistency check found their former SQLite references.
+- **Verification:** Searched active documentation for SQLite references after the update; only append-only historical/audit context remains.
+- **Result/limits:** No code, schema, dependency, or database connection was added or tested.
+
+## `DATA-01` — Supabase PostgreSQL persistence foundation
+
+- **AI assistance:** Implemented backend-only SQLAlchemy models, configuration, PostgreSQL engine/session helpers, and idempotent table initialization.
+- **Developer decision:** Use SQLAlchemy 2.0.52, psycopg 3.3.5, and python-dotenv 1.2.3; load only the ignored repository `.env` without overriding an existing OS environment variable. No API, worker, frontend, Auth, Storage, Realtime, RLS, or media binary implementation was added.
+- **Affected areas:** `backend/app/core/`, `backend/app/models/`, `backend/requirements.txt`, `.env.example`, and the authoritative architecture/environment records.
+- **Verification:** Installed the pinned dependencies; `compileall` and offline SQLAlchemy metadata/relationship checks passed; `.env` is ignored and `.env.example` is trackable. The real initializer correctly refused to run because no `DATABASE_URL` is configured.
+- **Result/limits:** The code foundation is present, but no Supabase connection, table creation, transaction, reconnect readback, or test-record cleanup could be performed. DATA-01 remains incomplete.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `DATA-01` — Live Supabase verification attempt
+
+- **AI assistance:** Ran the application's SQLAlchemy/psycopg initialization and planned reconnect verification against the ignored local `DATABASE_URL`; used the selected Supabase plugin only for supplementary project/table inspection.
+- **Verification:** The application reached Supabase but authentication was rejected before DDL or data changes. The plugin showed the intended project as healthy with no public tables. `.env` was not read into output or source control.
+- **Result/limits:** No tables, verification records, or unrelated data were created, changed, or deleted. DATA-01 remains incomplete until valid local database credentials are provided.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `DATA-01` — Live Supabase verification completed
+
+- **AI assistance:** Re-ran verification through the application's SQLAlchemy/psycopg connection after local credentials were corrected.
+- **Verification:** Initialized the four metadata tables idempotently; committed one connected Project/Job/Segment/Artifact dataset; disposed the engine; read it back through a new engine/session; confirmed UUIDs, timezone-aware timestamps, relationships, foreign keys, and status/time constraints; then deleted only the verification project and cascade-owned children.
+- **Result/limits:** DATA-01 is complete. No API, frontend, worker, Auth, Storage, Realtime, RLS, or media-binary capability was added.
+- **Commit/issue:** None recorded by the AI assistant.

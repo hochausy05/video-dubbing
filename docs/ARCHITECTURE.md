@@ -8,13 +8,13 @@ This file is authoritative for technical boundaries and data flow. It describes 
 
 | Component | Owns | Must not own |
 | --- | --- | --- |
-| React + TypeScript + Vite | Upload UI, project list, job state, translation editing, artifact preview/download | Secrets or direct Whisper/FFmpeg execution |
-| FastAPI | HTTP validation, persistence calls, job creation, status/result endpoints | Full media processing inside a web request |
-| SQLite | `Project`, `Job`, `Segment`, translation revision, `Artifact`, persisted state/errors | Large video/audio binary content |
+| React + TypeScript + Vite | Upload UI, project list, job state, translation editing, artifact preview/download | Secrets, direct access to application tables, or direct Whisper/FFmpeg execution |
+| FastAPI | HTTP validation, SQLAlchemy persistence calls, job creation, status/result endpoints | Full media processing inside a web request |
+| Supabase-hosted PostgreSQL | Metadata for `Project`, `Job`, `Segment`, translation revision, `Artifact`, and persisted state/errors | Large video/audio/output file contents |
 | Python worker | Sequential job claiming; Whisper, Gemini, Edge-TTS, FFmpeg; persisted stage/result updates | Dependence on an open browser tab |
 | Local storage | Source, intermediate, and result files isolated by server-generated project/job IDs | Arbitrary client-selected filesystem paths |
 
-Frontend calls FastAPI. FastAPI persists a queued job. A separate worker process on the same Windows machine claims one job at a time and writes state/results back to SQLite and local storage.
+Frontend calls FastAPI only. FastAPI and the worker access Supabase-hosted PostgreSQL through SQLAlchemy with a PostgreSQL driver, using `DATABASE_URL` from uncommitted environment configuration. A separate worker process on the same Windows machine claims one job at a time and writes state/results back to PostgreSQL and local storage.
 
 ## Pipeline A — Transcribe and translate
 
@@ -54,7 +54,7 @@ Worker job states: `queued`, `running`, `succeeded`, `failed`, `interrupted`.
 | `Segment` | Stable ID, project ID, order, start/end, source text, translated text, revision, warnings |
 | `Artifact` | ID, project/job ID, revision, media type, controlled internal path |
 
-Field names and schemas are finalized in `DATA-01`, not by this planning document. Clients receive controlled IDs/URLs, never server absolute paths.
+Persistent entities use UUID identifiers and timezone-aware timestamps where appropriate. The database stores metadata and controlled media references only; source, intermediate, and output file contents remain in server-managed storage. DATA-01 field definitions and constraints live in `backend/app/models/entities.py`; clients receive controlled IDs/URLs, never server absolute paths.
 
 ## Planned API groups
 
@@ -71,8 +71,7 @@ Routes and payloads are finalized incrementally before frontend integration; do 
 
 - Local Windows, one user, one worker, one video job at a time.
 - Python 3.11 virtual environment for backend/worker.
-- API keys remain in backend/worker configuration; examples contain placeholders only.
+- API keys and `DATABASE_URL` remain in backend/worker environment configuration; examples contain placeholders only and `DATABASE_URL` is never committed.
 - Prefer `h264_nvenc` for rendering only when runtime checks pass; retain CPU encoding fallback.
-- SQLite, storage, generated media, and sensitive logs remain outside Git.
-- Redis/RQ, public deployment, accounts, and multi-user operation are excluded from the MVP unless scope is explicitly revised.
-
+- Server-managed storage, generated media, and sensitive logs remain outside Git; Supabase connection credentials are never committed.
+- Supabase Auth, Storage, Realtime, and RLS; Redis/RQ; public deployment; accounts; and multi-user operation are excluded from the MVP unless scope is explicitly revised.
