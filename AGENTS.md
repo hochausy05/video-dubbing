@@ -1,24 +1,56 @@
-# Hướng dẫn cho trợ lý lập trình
+# AutoDub Agent Guide
 
-## Đọc trước khi làm việc
+## Goal
 
-1. `README.md`: mục tiêu và phạm vi.
-2. `PLAN.md`: hướng phát triển theo giai đoạn.
-3. `RULES.md`: quy tắc bắt buộc trong dự án.
-4. `TASKS.md`: trạng thái và việc cần làm.
-5. `docs/ARCHITECTURE.md`: ranh giới trách nhiệm dự kiến.
+Work on one requested task at a time while loading the smallest useful project context.
 
-## Cách làm việc
+## Context-loading protocol
 
-- AutoDub đang bắt đầu bằng tài liệu và thư mục giữ chỗ. Không giả định backend/frontend đã tồn tại hoặc chạy được.
-- Chỉ làm task người phát triển yêu cầu; không tự triển khai các tuần sau.
-- Trước khi sửa, nêu ngắn gọn mục tiêu và phạm vi file.
-- Thực hiện thay đổi nhỏ, giữ các thay đổi không liên quan của người phát triển.
-- Khi tích hợp thư viện, kiểm tra tài liệu chính thức và môi trường trước; không đoán tên API/model hoặc bịa dependencies.
-- Không đưa khóa API, video hoặc dữ liệu runtime vào Git.
-- Không tự commit/push hoặc thao tác phá hủy lịch sử khi chưa được yêu cầu.
-- Sau thay đổi, báo rõ file đã sửa, kiểm tra đã chạy, kết quả và phần chưa kiểm chứng.
-- Chỉ cập nhật task sang hoàn thành khi đạt tiêu chí; ghi công việc AI vào `docs/AI_USAGE.md` khi phù hợp.
-- Nếu được yêu cầu chỉ lập kế hoạch/đánh giá, không triển khai chức năng.
+Do **not** read every Markdown file by default.
 
-Các quy tắc chi tiết nằm tại RULES.md; không duy trì bản sao nội dung dài dễ lệch nhau trong file này.
+1. Read `RULES.md`.
+2. In `TASKS.md`, read only `Current Task` and the matching task entry.
+3. Inspect the repository paths that the task may change.
+4. Use the routing table below to load only relevant document sections.
+5. Read additional documents only when a concrete ambiguity cannot be resolved from code, tests, or the routed source of truth.
+
+Use heading search before opening a long document, for example:
+
+```bash
+rg -n "^## |^### |TASK-ID|FR-[0-9]+|NFR-[0-9]+|US-[0-9]+" <file>
+```
+
+## Document routing
+
+| Task type | Read in addition to `RULES.md` and the task entry |
+| --- | --- |
+| Project overview or onboarding | Relevant section of `README.md` |
+| Roadmap, phase order, or scope scheduling | Relevant phase in `PLAN.md` |
+| Product behavior or acceptance | Matching `US`, `FR`, or `NFR` section in `docs/PRD.md` |
+| Component boundaries, data flow, API, worker, or storage | Relevant section in `docs/ARCHITECTURE.md` |
+| Python, Node, FFmpeg, GPU, disk, or local setup | Relevant section in `docs/ENVIRONMENT.md` |
+| AI-use audit | Latest relevant entry in `docs/AI_USAGE.md` |
+| Change history | Only the latest relevant entry or `tail -n 40 docs/CHANGELOG.md` |
+
+Examples:
+
+- `ENV-*`: `docs/ENVIRONMENT.md`; architecture only if component boundaries change.
+- `DATA-*`, `JOB-*`: data/worker sections of `docs/ARCHITECTURE.md` plus matching PRD requirements.
+- `UPLOAD-*`, `ASR-*`, `TRANS-*`, `TTS-*`, `RENDER-*`: matching pipeline section and matching PRD requirements.
+- `UI-*`, `EDIT-*`, `RESULT-*`: matching user story plus relevant API boundary.
+- `QA-*`: acceptance criteria of the behavior under test; do not load unrelated product sections.
+- `DOC-*`, `INIT-*`: only documents explicitly affected by the requested documentation change.
+
+## Execution protocol
+
+- State the task ID, goal, scope, and expected files before editing.
+- Preserve unrelated developer changes.
+- Do not implement later tasks or speculative abstractions.
+- Verify with the smallest relevant reproducible checks.
+- Mark a task complete only when its acceptance criteria have real evidence.
+- After work, update only the authoritative documents affected by facts that changed.
+- Follow the append-only change-log rules in `RULES.md`; never rewrite old entries.
+- Record material AI assistance in `docs/AI_USAGE.md` when required.
+- Report changed files, checks run, results, and anything not verified.
+- Do not commit, push, rewrite Git history, or perform destructive cleanup unless explicitly requested.
+

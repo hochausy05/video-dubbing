@@ -1,64 +1,53 @@
-# Kế hoạch phát triển AutoDub
+# AutoDub Development Plan
 
-## 1. Nguyên tắc lập kế hoạch
+## Purpose
 
-- Trạng thái hiện tại: khởi tạo tài liệu và cấu trúc, chưa triển khai chức năng.
-- Phát triển tăng dần; mỗi giai đoạn có đầu ra nhỏ có thể kiểm chứng.
-- Kế hoạch 6 tuần dưới đây là bản dự kiến, không phải lịch môn học đã xác nhận.
-- Không coi việc tạo đủ thư mục hoặc sinh được code là hoàn thành tính năng.
-- Ưu tiên demo cục bộ một người dùng, một worker trước khi mở rộng.
+This file defines phase order and exit gates. It does not track completion; use `TASKS.md` for status.
 
-## 2. Các mốc dự kiến
+## Delivery principles
 
-| Mốc | Trọng tâm | Đầu ra dự kiến | Điều kiện kiểm chứng |
-| --- | --- | --- | --- |
-| Tuần 1 | Xác định đề tài và nền tảng | Tài liệu, cấu trúc; sau khi duyệt phạm vi mới tạo backend/frontend tối thiểu | Phạm vi thống nhất; API health và trang chào chạy cục bộ sau bước khởi tạo môi trường |
-| Tuần 2 | Quản lý dự án và upload | Dữ liệu project/job; upload; danh sách dự án | Upload video hợp lệ; từ chối đầu vào sai; tải lại trang vẫn thấy dự án |
-| Tuần 3 | Nhận dạng và dịch | Worker, trạng thái tác vụ, transcript và bản dịch | Video thử ngắn tạo được các đoạn có timestamp; lỗi API/quota được báo đúng |
-| Tuần 4 | Duyệt và sửa bản dịch | Trang chi tiết, trình phát video và bộ sửa text | Sửa và lưu bản dịch; kết quả vẫn còn sau khi tải lại trang |
-| Tuần 5 | Tạo giọng và render | Chọn giọng, TTS, xuất MP4/SRT và tải xuống | Luồng upload → dịch → duyệt → lồng tiếng chạy được; kiểm tra đoạn mất tiếng/lệch thời gian |
-| Tuần 6 | Kiểm thử và hoàn thiện | Kiểm thử hồi quy, sửa lỗi, hướng dẫn demo, báo cáo | Có bằng chứng chạy thật, danh sách hạn chế và hướng dẫn tái hiện trên môi trường đã kiểm chứng |
+- Build and verify the MVP incrementally throughout the semester.
+- Each task must produce a small, inspectable outcome before later work begins.
+- Each week should contain real, meaningful GitHub progress; never fabricate commits, tests, measurements, or dates.
+- A phase may take one or several weeks.
+- Expand scope only after the local single-user MVP flow has verified evidence.
 
-Hiện tại mới hoàn thành phần tài liệu/cấu trúc của tuần 1; không đánh dấu cả tuần 1 hoàn thành.
+## Phases
 
-## 3. Trình tự triển khai
+| Phase | Focus | Exit evidence |
+| --- | --- | --- |
+| 1 | Documents and environment | Consistent scope/architecture plus recorded machine and tooling checks |
+| 2 | FastAPI and React foundations | Local API health check and a buildable basic UI |
+| 3 | SQLite, projects, and upload | Persistent projects plus safe validation/storage of accepted videos |
+| 4 | Jobs and worker | API returns a job ID; a separate worker processes one queued job; status survives reload/restart policy |
+| 5 | Whisper transcript | A permitted sample produces valid segments and timestamps |
+| 6 | Gemini and translation review | Segment translation is editable, persisted, revisioned, and confirmable |
+| 7 | Edge-TTS and FFmpeg output | Confirmed revision produces valid audio, MP4, and SRT artifacts |
+| 8 | QA, UI polish, and final report | End-to-end evidence, measured limits, reproducible setup, demo materials |
 
-1. Chốt yêu cầu, môi trường và tiêu chí nghiệm thu.
-2. Dựng khung chạy tối thiểu cho giao diện và API.
-3. Hoàn thiện upload, dữ liệu và trạng thái job trước khi tích hợp AI.
-4. Tích hợp từng bước xử lý riêng biệt, bắt đầu bằng video mẫu ngắn.
-5. Kết nối giao diện duyệt bản dịch với tạo giọng và render.
-6. Kiểm thử đầu-cuối, đo thời gian và ghi rõ hạn chế.
+## Transition rules
 
-Có thể dùng dữ liệu giả để phát triển giao diện/kiểm thử sớm nhưng phải ghi rõ là mock; không dùng mock làm bằng chứng hệ thống AI đã chạy thật.
+1. Do not treat documentation or mocks as proof that a runtime integration works.
+2. Do not start a dependent task until the required predecessor evidence exists.
+3. For AI/video phases, use permitted test media and record the real environment and result.
+4. Document known limitations instead of hiding them or silently substituting invalid output.
 
-## 4. Theo dõi GitHub theo tuần
+## Weekly evidence
 
-- Tạo repository và remote khi người phát triển sẵn sàng; bộ khung này chưa kết nối GitHub.
-- Tạo issue tương ứng task ID trong TASKS.md.
-- Commit theo thay đổi có ý nghĩa, ví dụ `docs: define initial scope` hoặc `feat: add video upload` sau khi thực sự làm xong.
-- Push đều trong tuần, không đợi đến cuối kỳ mới đưa toàn bộ code lên.
-- Cuối tuần dùng mẫu `docs/weekly/TEMPLATE.md` để ghi kết quả thật; liên kết commit/issue và ảnh demo nếu có.
-- Không tạo lịch sử, commit, kết quả test hoặc mốc thời gian giả. Nếu chưa hoàn thành thì giữ trạng thái chưa hoàn thành.
+- Create or update an issue using the task ID when work starts.
+- Commit coherent changes and push actual progress during the week.
+- Record checks, results, limitations, and links in a weekly report based on `docs/weekly/TEMPLATE.md`.
+- Keep weekly reporting separate from task status and the append-only task changelog.
 
-## 5. Rủi ro và cách kiểm soát dự kiến
+## Risk controls
 
-| Rủi ro | Hướng kiểm soát |
+| Risk | Control |
 | --- | --- |
-| Máy thiếu GPU hoặc không tương thích | Thử CPU với video ngắn; đo hiệu năng trước khi quyết định triển khai |
-| Hàng đợi/worker không phù hợp Windows | Kiểm chứng môi trường; cân nhắc WSL/Linux trước khi khóa lựa chọn queue |
-| Quota, lỗi mạng hoặc dịch vụ TTS gián đoạn | Retry có giới hạn; thông báo rõ; không báo thành công bằng audio im lặng |
-| Dịch thiếu hoặc sai nội dung | Giữ text nguồn, cho sửa bản dịch và chỉ rõ đoạn cần kiểm tra |
-| Giọng đọc dài hơn khoảng thoại | Đo thời lượng và cảnh báo; không tự cắt mất câu để vừa timeline |
-| Video lớn làm đầy RAM/ổ đĩa | Giới hạn upload/thời lượng, một worker, quản lý tệp theo project/job |
-| Phạm vi quá rộng | Hoàn thiện MVP trước; không thêm tài khoản, OCR, clone giọng hoặc batch trong giai đoạn đầu |
+| GPU is unavailable or incompatible | Test short CPU input; benchmark before optimizing; never claim GPU support without evidence |
+| Worker/runtime mismatch | Verify the selected Windows environment before adding queue complexity |
+| Provider quota or network failure | Bounded retry, classified errors, clear user feedback |
+| Missing or incorrect translation | Preserve source text; allow segment review and confirmation |
+| Speech exceeds segment duration | Measure and warn; never truncate a sentence silently |
+| Large media exhausts disk/RAM | Enforce input limits, run one worker, isolate project/job files, monitor free space |
+| Scope expansion | Complete the MVP first; keep excluded features in backlog |
 
-## 6. Những điểm cần xác nhận
-
-- [ ] Số tuần, hạn nộp và tiêu chí đánh giá chính thức của môn học.
-- [ ] Làm cá nhân hay nhóm; phân công nếu có.
-- [ ] Hệ điều hành, Python/Node phù hợp và tài nguyên máy demo.
-- [ ] Nguồn video kiểm thử được phép sử dụng và quyền truy cập dịch vụ AI.
-- [ ] Có bắt buộc demo online không; nếu có, lập thêm kế hoạch bảo mật và triển khai.
-
-Chưa cần giải quyết các điểm này để đọc bộ khung, nhưng phải xác nhận trước những bước triển khai có liên quan.

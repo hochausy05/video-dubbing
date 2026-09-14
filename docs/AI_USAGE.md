@@ -1,28 +1,34 @@
-# Nhật ký sử dụng AI
+# AI Usage Log
 
-## Mục đích
+## Initial documentation (`INIT-01`, `INIT-02`)
 
-Ghi lại AI đã hỗ trợ việc gì, quyết định nào do người phát triển đưa ra và kết quả đã được kiểm tra thế nào. Không cần lưu toàn bộ hội thoại hoặc dữ liệu nhạy cảm.
+- **AI assistance:** Proposed the initial project goals, scope, plan, backlog, engineering rules, and placeholder repository structure.
+- **Developer decision:** Keep this stage documentation-only; product scope, stack, and demo machine required later review.
+- **Verification:** Checked delivered files, structure, and internal links. No application test was claimed because no application existed.
+- **Result/limits:** Initial document and directory foundation created; no repository commit or issue was recorded here.
 
-## Giai đoạn khởi tạo tài liệu
+## `INIT-03` — Confirm MVP direction and scope
 
-- Yêu cầu: soạn tài liệu ban đầu và cấu trúc thư mục cho AutoDub; chưa triển khai ứng dụng.
-- AI hỗ trợ: đề xuất mục tiêu/phạm vi, kế hoạch 6 tuần dự kiến, backlog, quy tắc và khung thư mục.
-- Kiểm tra kỹ thuật: đối chiếu file/cấu trúc, liên kết nội bộ và nội dung gói bàn giao; không chạy test ứng dụng vì chưa có mã ứng dụng.
-- Người phát triển cần duyệt tiếp: lịch môn học, phạm vi, stack và máy demo trước khi bắt đầu code.
-- Commit/issue: chưa có; bổ sung sau khi thực sự tạo repository và push.
+- **AI assistance:** Normalized semester development direction, MVP scope, processing flow, architecture, exclusions, and phase order across project documents.
+- **Developer decision:** Local single-user MVP; one video at a time; React/TypeScript/Vite, FastAPI, SQLite, and a Python worker; Redis/RQ only if future evidence justifies it.
+- **Affected areas:** `README.md`, `PLAN.md`, `TASKS.md`, `docs/PRD.md`, and `docs/ARCHITECTURE.md`.
+- **Verification:** Read relevant source documents, checked Markdown links, and ran `git diff --check` after editing.
+- **Result/limits:** Documentation scope completed. Whisper, Gemini, Edge-TTS, FFmpeg, and input limits remained unverified.
+- **Commit/issue:** None recorded by the AI assistant.
 
-## Mẫu cho các lần tiếp theo
+## `INIT-04` — Confirm development environment
 
-Sao chép mục sau, điền theo thực tế; không giữ các placeholder như kết quả hoàn thành.
+- **AI assistance:** Analyzed developer-provided machine results and updated environment-related documentation without installing packages or writing application code.
+- **Developer decision:** Python 3.11 virtual environment; worker directly on Windows; one job at a time; Whisper model `small` initially; prefer `h264_nvenc` when available; retain CPU fallback.
+- **Affected areas:** `docs/ENVIRONMENT.md` and related environment references.
+- **Verification:** Compared developer-provided command output with the recorded environment facts; checked documentation consistency.
+- **Result/limits:** Environment documentation completed. Whisper GPU execution and provider/media performance were not claimed as verified.
+- **Commit/issue:** None recorded by the AI assistant.
 
-### [Ngày] — [Task ID và tên nhiệm vụ]
+## `ENV-00` — Confirm disk capacity
 
-- Công cụ/mô hình AI: [ghi công cụ thực tế đã dùng].
-- Mục tiêu và yêu cầu gửi AI: [tóm tắt].
-- File/phần AI hỗ trợ: [liệt kê].
-- Quyết định hoặc điều chỉnh của người phát triển: [mô tả].
-- Kiểm tra đã chạy: [lệnh hoặc thao tác thực tế].
-- Kết quả: [đạt/chưa đạt/chưa kiểm tra, kèm bằng chứng].
-- Lỗi, rủi ro hoặc phần chưa hiểu cần xem lại: [mô tả].
-- Commit/issue: [liên kết thực tế khi có].
+- **AI assistance:** Reviewed the move to drive D and available capacity.
+- **Developer decision:** Continue the MVP on drive D while keeping roughly 10 GB free during model download and media processing.
+- **Verification:** Developer reported about 27 GB free on drive D.
+- **Result/limits:** Disk prerequisite accepted. No virtual environment, dependencies, models, or application code were created in this task.
+

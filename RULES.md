@@ -1,75 +1,108 @@
-# Quy tắc phát triển AutoDub
+# AutoDub Engineering Rules
 
-## 1. Bối cảnh và phạm vi
+## 1. Sources of truth
 
-AutoDub đang ở giai đoạn bắt đầu một dự án môn học. Phát triển từng nhiệm vụ, từng giai đoạn và ghi nhận trên GitHub theo tuần. Tài liệu định hướng không phải bằng chứng ứng dụng đã hoạt động.
+- `TASKS.md`: task status and task-level acceptance.
+- `PLAN.md`: phase order and exit gates.
+- `docs/PRD.md`: product scope and behavior.
+- `docs/ARCHITECTURE.md`: technical boundaries and data flow.
+- `docs/ENVIRONMENT.md`: verified machine/tooling facts.
+- `docs/CHANGELOG.md`: append-only Vietnamese history of task changes.
+- `docs/AI_USAGE.md`: append-only audit of material AI assistance.
 
-- Đọc README.md, PLAN.md và TASKS.md trước khi thay đổi.
-- Chỉ thực hiện nhiệm vụ được yêu cầu; không tự xây cả hệ thống hoặc thêm tính năng ngoài phạm vi.
-- Muốn thay đổi công nghệ/phạm vi đáng kể phải nêu lý do và xin ý kiến người phát triển.
-- Không copy bí mật hoặc nội dung không có quyền sử dụng vào repository.
+Do not duplicate changing facts across files. If a fact belongs to one source of truth, link to it elsewhere.
 
-## 2. Phân chia trách nhiệm
+## 2. Minimal-context workflow
 
-- `frontend/`: hiển thị và tương tác; không chứa API key, không trực tiếp chạy Python/FFmpeg.
-- `backend/app/api/`: nhận và kiểm tra request, gọi nghiệp vụ; không giữ request mở để xử lý cả video.
-- `backend/app/services/`: logic nghiệp vụ, nhận dạng, dịch, TTS và render; không phụ thuộc giao diện.
-- `backend/app/workers/`: chạy tác vụ nền, cập nhật trạng thái; lúc đầu chỉ một tác vụ video đồng thời.
-- `backend/app/models/` và `schemas/`: tách dữ liệu lưu trữ với hợp đồng request/response.
-- `storage/`: dữ liệu runtime; đường dẫn do server tạo, không lấy đường dẫn tùy ý từ người dùng.
+- Follow the routing table in `AGENTS.md`; never read every Markdown file by default.
+- Always read this file and only the current task block/matching task line in `TASKS.md`.
+- Search headings and requirement/task IDs before opening long sections.
+- Load a second document only when the task type requires it or a concrete ambiguity remains.
+- Inspect relevant code and tests before assuming a planned document reflects implementation.
 
-Không tạo abstraction, microservice hoặc framework bổ sung khi chưa có nhu cầu cụ thể. Các thư mục là điểm bắt đầu; có thể bổ sung khi triển khai task tương ứng.
+## 3. Task scope and completion
 
-## 3. Quy trình sử dụng AI
+- Work only on the requested task ID. Do not implement later tasks or the entire system.
+- State the task goal, scope, and expected files before editing.
+- Preserve unrelated developer changes and keep each change reviewable.
+- Ask before materially changing the stack, MVP scope, or architecture.
+- A functional task is complete only when its `TASKS.md` criteria pass with real, reproducible evidence.
+- A documentation task requires consistency, path/link, and status checks; it does not require fake runtime tests.
+- Record unverified behavior, remaining limits, and failed checks explicitly.
+- Never fabricate test output, performance data, deployment URLs, commits, issues, or dates.
+- After two ineffective attempts at the same failure, stop, summarize evidence, and propose a different approach.
 
-1. Nêu task ID, mục tiêu, tiêu chí hoàn thành và file dự kiến thay đổi.
-2. Yêu cầu AI làm một thay đổi nhỏ, có thể đọc và kiểm chứng.
-3. Đọc diff, kiểm tra logic và đối chiếu tài liệu chính thức cho API/thư viện liên quan.
-4. Chạy kiểm tra phù hợp; không coi “không báo lỗi cú pháp” là pipeline đã đúng.
-5. Ghi kết quả thật vào TASKS.md và nhật ký AI; commit/push theo quy trình dự án.
+## 4. Architecture boundaries
 
-AI không được tự đánh dấu task hoàn thành nếu chưa có bằng chứng. Không bịa kết quả test, số đo hiệu năng, URL triển khai hoặc lịch sử commit. Sau hai lần sửa cùng lỗi không hiệu quả, dừng cách tiếp cận cũ, tóm tắt bằng chứng và đề xuất hướng mới.
+- `frontend/` renders UI and calls the API; it must not hold secrets or run Python/FFmpeg directly.
+- `backend/app/api/` validates HTTP input and delegates work; it must not keep a request open for the full media pipeline.
+- `backend/app/services/` owns domain and AI/video operations without UI dependencies.
+- `backend/app/workers/` executes background jobs and persists status; the MVP processes one video job at a time.
+- `backend/app/models/` and `backend/app/schemas/` separate persistence models from API contracts.
+- `storage/` contains server-managed runtime data. Never accept an arbitrary client filesystem path.
+- Do not add microservices, frameworks, queues, or abstractions without a task-backed need.
 
-## 4. Chất lượng dữ liệu và xử lý lỗi
+## 5. Data and pipeline integrity
 
-- Duy trì ID ổn định cho từng đoạn lời thoại; giữ text nguồn riêng với text dịch.
-- Kiểm tra thời gian bắt đầu/kết thúc, nội dung rỗng và số đoạn trả về.
-- Không âm thầm dùng text chưa dịch hoặc audio im lặng rồi báo hoàn tất.
-- Không cắt bỏ văn bản dài để làm TTS thành công; chia đoạn hợp lý hoặc báo lỗi cần xử lý.
-- Có retry giới hạn cho lỗi tạm thời; phân biệt quota hết với lỗi dữ liệu và lỗi mạng.
-- TTS/render chỉ sử dụng phiên bản bản dịch đã được người dùng xác nhận.
-- Sửa bản dịch phải làm kết quả audio/video cũ trở thành chưa cập nhật; không trình bày chúng như kết quả mới.
-- Trạng thái job và lỗi phải được lưu bền vững, không chỉ nằm trong biến của trình duyệt.
-- Khi thêm khả năng thử lại, không chạy trùng job hoặc tái sử dụng sai artifact của lần trước.
+- Keep stable segment IDs, order, timestamps, source text, and translated text as separate fields.
+- Validate non-empty content, timestamp ordering, segment count, and provider response structure.
+- Never report success using untranslated fallback text, silent audio, incomplete segments, or stale artifacts.
+- Never truncate long TTS text merely to make generation pass; split safely or report the problem.
+- Use only a user-confirmed translation revision for TTS/render.
+- Editing a translation invalidates audio/video created from an older revision.
+- Persist job status and errors; browser memory is not authoritative.
+- Bounded retries must distinguish transient, quota, network, and data errors and must not duplicate jobs/artifacts.
 
-## 5. Tệp, tài nguyên và bảo mật
+## 6. Files, processes, and security
 
-- Dùng ID do backend tạo và thư mục riêng cho từng project/job.
-- Kiểm tra dung lượng, định dạng thực tế và thời lượng video; không chỉ tin phần mở rộng.
-- Gọi FFmpeg bằng danh sách đối số, không ghép đầu vào người dùng thành shell command.
-- Thiết lập timeout phù hợp; đóng file/tiến trình và giải phóng tài nguyên trong cả đường lỗi.
-- Không commit `.env`, khóa API, môi trường ảo, dependency tải về, video hoặc cơ sở dữ liệu runtime.
-- Không ghi API key hoặc toàn bộ nội dung nhạy cảm vào log.
-- Không xóa thư mục rộng để dọn cache; chỉ dọn đúng job đã xác định, không xóa đầu vào/kết quả còn cần dùng.
-- Không mở demo công khai khi chưa có kiểm soát truy cập, quota và giới hạn dung lượng.
-- Thông báo cho người dùng khi văn bản được gửi đến dịch vụ AI bên ngoài.
+- Generate project/job IDs and isolate their storage directories on the server.
+- Validate actual file type, configured size, and duration; do not trust an extension alone.
+- Invoke FFmpeg with an argument list, never a shell command built from user input.
+- Use timeouts and release files/processes on success and failure paths.
+- Never commit `.env`, secrets, virtual environments, downloaded dependencies/models, private media, runtime databases, artifacts, or sensitive logs.
+- Never expose API keys or full sensitive content in logs.
+- Cleanup must target one validated project/job path; never delete a broad directory.
+- Do not expose the local demo publicly without access, quota, and resource controls.
+- Inform the user before or when text is sent to an external AI provider.
+- Use only media/code/assets that the developer owns or may legally use; preserve required attribution.
 
-## 6. Định nghĩa hoàn thành một task
+## 7. Validation and reporting
 
-Một task chức năng chỉ được đánh dấu hoàn thành khi:
+- Run the smallest relevant unit, integration, build, lint, or manual check.
+- Report exact commands/actions and actual outcomes.
+- `git diff --check` is required after text/code changes when Git is available.
+- Review the diff before changing task status.
+- Do not commit, push, force-push, delete branches, or rewrite history unless explicitly requested.
 
-- Đáp ứng tiêu chí đã ghi trong TASKS.md.
-- Có kiểm thử hoặc kiểm tra thủ công có bước tái hiện và kết quả thực tế.
-- Các lỗi/giới hạn còn tồn tại được ghi rõ.
-- Không lộ bí mật, không thêm dữ liệu runtime vào Git.
-- Tài liệu liên quan được cập nhật nếu hành vi/cách chạy thay đổi.
+## 8. Task changelog — mandatory append-only rule
 
-Task tài liệu chỉ cần kiểm tra tính nhất quán, đường dẫn và trạng thái; không yêu cầu giả lập kiểm thử ứng dụng chưa tồn tại.
+At the end of a task that is completed, paused, or blocked **after repository changes were made**, append one Vietnamese entry to `docs/CHANGELOG.md`.
 
-## 7. Git và tài liệu
+Mandatory rules:
 
-- Mỗi commit có mục đích rõ ràng; không gộp thay đổi không liên quan.
-- Không tự push, force-push, xóa branch hoặc ghi đè lịch sử khi chưa được yêu cầu.
-- Không đánh dấu cả tuần hoàn thành chỉ vì một task nhỏ đã xong.
-- Báo cáo tuần ghi phân biệt: đã làm, đang làm, chưa làm, kiểm tra và hạn chế.
-- Ghi nhận việc dùng AI trung thực; tôn trọng giấy phép và ghi nguồn tài nguyên/mã bên thứ ba khi cần.
+- Append at the end of the file; keep oldest entries first.
+- Never delete, overwrite, reorder, consolidate, or edit an older entry.
+- To correct an old entry, append a new correction that references the original task/date.
+- Read only the last 40 lines before appending; do not load the full log unless explicitly auditing history.
+- Write verified facts only. Do not include prompts, chain-of-thought, secrets, or placeholders.
+- Keep the log itself free of templates and instructions; this section is the only writing specification.
+- Use Vietnamese even though all other project documents are English.
+
+Append this structure:
+
+```markdown
+## YYYY-MM-DD — TASK-ID: Tên nhiệm vụ
+
+- **Trạng thái:** Hoàn thành | Một phần | Bị chặn
+- **Thay đổi:** Mô tả ngắn gọn thay đổi thực tế.
+- **Tệp:** `path/to/file`, ...
+- **Kiểm chứng:** Lệnh/thao tác và kết quả thực tế.
+- **Còn lại:** Không | Nội dung chưa hoàn tất hoặc chưa kiểm chứng.
+```
+
+If no repository file changed, do not create a changelog entry.
+
+## 9. AI usage log
+
+When AI materially contributes to implementation, design, debugging, or documentation, append a concise English entry to `docs/AI_USAGE.md`. Record the task, assistance, developer decision, changed areas, real verification, result/limits, and commit/issue link when one exists. Never store full conversations or sensitive data.
+
