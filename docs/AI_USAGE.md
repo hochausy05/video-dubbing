@@ -105,3 +105,12 @@
 - **Verification:** Generated a small local MP4 and submitted normal plus traversal-style filename uploads over HTTP. Both returned 201, persisted through a new Supabase connection, used UUID-controlled relative paths, and were removed with their verification files.
 - **Result/limits:** UPLOAD-01 is complete. MIME/type, size, duration, and corruption validation remain explicitly deferred to UPLOAD-02.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `UPLOAD-02` — Video upload validation
+
+- **AI assistance:** Centralized the agreed MP4/100 MiB/1800-second defaults, added bounded streaming validation, and integrated `ffprobe` container, video-stream, readability, and duration checks before persistence.
+- **Developer decision:** Retain UPLOAD-01's UUID-only local storage and SQLAlchemy/Supabase flow; use the installed `ffprobe` executable with an argument list and timeout instead of adding a Python media library.
+- **Affected areas:** Upload configuration, storage service, FastAPI error mapping, authoritative upload documentation, and task/audit records.
+- **Verification:** Real multipart FastAPI requests against Supabase accepted valid and traversal-filename MP4 uploads (201); rejected an AVI (415), 104857601-byte upload (413), corrupt MP4 (422), and 1801-second MP4 (422). Every rejected name had zero Project rows and no residual UUID directory. Verification rows and generated media were deleted; `compileall`, `pip check`, and `git diff --check` passed; `.env` and runtime storage remain ignored.
+- **Result/limits:** UPLOAD-02 is complete. Validation is intentionally limited to MP4 type, configured byte size, container/readability/video stream, and duration; no transcoding or later media pipeline work was added.
+- **Commit/issue:** None recorded by the AI assistant.

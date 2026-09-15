@@ -18,7 +18,7 @@ Frontend calls FastAPI only. FastAPI and the worker access Supabase-hosted Postg
 
 ## Pipeline A — Transcribe and translate
 
-1. FastAPI validates an uploaded source and creates a persisted job.
+1. FastAPI streams an uploaded source into UUID-controlled local storage, enforcing the configured byte limit, then uses `ffprobe` to validate an actual MP4 video and its configured duration limit before persisting the Project. The canonical limits are in `docs/PRD.md` and backend configuration.
 2. The worker reads the source and runs Whisper, initially targeting model `small`.
 3. It validates ordered segments with stable IDs, timestamps, and source text.
 4. It sends required segment text to Gemini and stores Vietnamese text separately.

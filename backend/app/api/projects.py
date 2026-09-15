@@ -10,7 +10,12 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import create_database_engine, create_session_factory
 from app.models import Project
-from app.services.uploads import UploadStorageError, remove_source_upload, save_source_upload
+from app.services.uploads import (
+    UploadStorageError,
+    UploadValidationError,
+    remove_source_upload,
+    save_source_upload,
+)
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -38,6 +43,8 @@ async def upload_source_video(
             )
             session.add(project)
             session.commit()
+    except UploadValidationError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
     except UploadStorageError as error:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

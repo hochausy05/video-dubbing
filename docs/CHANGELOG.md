@@ -111,3 +111,11 @@
 - **Tệp:** `backend/app/main.py`, `backend/app/api/projects.py`, `backend/app/services/uploads.py`, `backend/app/core/config.py`, `backend/requirements.txt`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Upload HTTP thật một MP4 nhỏ và một upload có filename traversal đều nhận HTTP 201; metadata Project được xác nhận lại bằng kết nối Supabase mới, file nằm trong thư mục UUID do server tạo và không có đường dẫn tuyệt đối. Đã xóa hai Project, file upload và fixture kiểm chứng. `compileall`, `pip check`, `git diff --check` thành công; `.env` và runtime storage bị Git bỏ qua.
 - **Còn lại:** Không.
+
+## 2026-09-15 — UPLOAD-02: Xác thực video tải lên
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Chuẩn hóa giới hạn MP4, 100 MiB và 1800 giây trong PRD/cấu hình; ghi upload theo khối có giới hạn, dùng `ffprobe` kiểm tra container MP4 thực, video stream và thời lượng trước khi tạo Project; dọn thư mục UUID khi validation thất bại.
+- **Tệp:** `.env.example`, `backend/app/api/projects.py`, `backend/app/core/config.py`, `backend/app/services/uploads.py`, `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/ENVIRONMENT.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Qua endpoint FastAPI thật với Supabase: MP4 hợp lệ và filename traversal nhận 201, có đúng một Project và file chỉ ở đường dẫn UUID; AVI nhận 415, file 104857601 byte nhận 413, MP4 giả nhận 422, MP4 1801 giây nhận 422. Mỗi case bị từ chối có 0 Project và không còn thư mục upload; đã xóa Project/fixture kiểm chứng. `compileall`, `pip check`, `git diff --check` thành công; `.env` và runtime storage bị Git bỏ qua.
+- **Còn lại:** Không.

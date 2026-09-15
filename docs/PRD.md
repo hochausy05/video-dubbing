@@ -12,7 +12,7 @@ AI output is a draft. The user confirms the translation revision before speech g
 - Environment: local Windows demo; one user and one video job at a time.
 - Input preference: MP4, English or Chinese speech.
 - Target language: Vietnamese.
-- Provisional limits: 3 minutes and 100 MB; enforce only after implementation tests confirm them.
+- Upload validation limits: MP4 only; maximum file size 100 MiB (104857600 bytes); maximum duration 30 minutes (1800 seconds). These are configured by the backend `MAX_UPLOAD_SIZE_BYTES` and `MAX_VIDEO_DURATION_SECONDS` settings, which default to these values.
 
 ## 3. MVP flow
 
@@ -35,7 +35,7 @@ Create, list, and open projects. Persist metadata so projects remain visible aft
 
 ### `US-002` — Upload and validate video
 
-Accept supported valid media and clearly reject corrupt, unsupported, oversized, or over-duration input. Store it under server-generated identifiers; user filenames must not control server paths. Verify through the local browser UI.
+Accept only valid MP4 video up to the configured 100 MiB/1800-second defaults, and clearly reject corrupt, unsupported, oversized, or over-duration input. Confirm the actual container and duration with ffprobe rather than trusting a filename or client MIME type. Store it under server-generated identifiers; user filenames must not control server paths. Verify through the local browser UI.
 
 ### `US-003` — Request transcription and translation
 
@@ -58,7 +58,7 @@ Use only a tested Vietnamese voice and the confirmed revision. Validate per-segm
 | ID | Requirement |
 | --- | --- |
 | `FR-01` | Create/list/read persistent projects. |
-| `FR-02` | Validate actual media format, configured size, and duration before processing. |
+| `FR-02` | Before project persistence, validate actual MP4 container/video content, configured size, and duration with ffprobe. Defaults are 100 MiB (104857600 bytes) and 1800 seconds; filename extensions and client MIME types are not trusted. |
 | `FR-03` | Use server-generated IDs and controlled storage paths/URLs. |
 | `FR-04` | Run transcription/translation and TTS/render in background worker jobs. |
 | `FR-05` | Process at most one video job concurrently in the MVP. |
@@ -109,5 +109,5 @@ The MVP is accepted only after one permitted sample demonstrates:
 
 - Select permitted test media and confirm available Gemini/TTS access/quota.
 - Verify faster-whisper GPU compatibility on the recorded machine; CPU is fallback.
-- Test provisional 3-minute/100-MB limits and measure actual stage performance.
+- Reassess upload limits only with a documented product decision; current defaults are MP4, 100 MiB, and 1800 seconds.
 - Verify Edge-TTS voice availability/behavior and actual NVENC render commands.

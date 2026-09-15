@@ -43,7 +43,7 @@ This file records facts verified during `INIT-04` and `ENV-00` plus explicit env
 
 - `.venv`, project packages, and Whisper model are not yet installed by the recorded environment tasks.
 - faster-whisper/Whisper has not run on the GPU; GPU support must not be claimed before `ASR-01` evidence.
-- Gemini, Edge-TTS, media limits, and end-to-end performance remain unverified.
+- Gemini, Edge-TTS, and end-to-end performance remain unverified. The configured MP4 upload limits are documented in `docs/PRD.md`; UPLOAD-02 must verify enforcement through the FastAPI endpoint.
 - Detected NVENC support does not prove every render command will succeed.
 - Supabase connection and DATA-01 persistence verification completed using the ignored local `DATABASE_URL`; future environment or credential changes require a fresh connection check.
 
