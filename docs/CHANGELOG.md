@@ -119,3 +119,35 @@
 - **Tệp:** `.env.example`, `backend/app/api/projects.py`, `backend/app/core/config.py`, `backend/app/services/uploads.py`, `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/ENVIRONMENT.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Qua endpoint FastAPI thật với Supabase: MP4 hợp lệ và filename traversal nhận 201, có đúng một Project và file chỉ ở đường dẫn UUID; AVI nhận 415, file 104857601 byte nhận 413, MP4 giả nhận 422, MP4 1801 giây nhận 422. Mỗi case bị từ chối có 0 Project và không còn thư mục upload; đã xóa Project/fixture kiểm chứng. `compileall`, `pip check`, `git diff --check` thành công; `.env` và runtime storage bị Git bỏ qua.
 - **Còn lại:** Không.
+
+## 2026-09-21 — UI-01: API danh sách Project cho persistence giao diện
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm `GET /projects` với schema response ổn định, chỉ trả metadata Project hữu ích cho danh sách và sắp xếp mới nhất trước; thêm proxy Vite `/api` tới FastAPI cục bộ.
+- **Tệp:** `backend/app/api/projects.py`, `backend/app/schemas/__init__.py`, `backend/app/schemas/projects.py`, `frontend/vite.config.ts`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Upload multipart MP4 thật qua FastAPI tạo một Project trong Supabase; gọi `GET /projects` và đọc lại cùng bản ghi bằng engine/session mới; xác nhận source reference không tuyệt đối; gọi `/api/projects` qua Vite proxy; `compileall`, `pip check`, frontend build và `git diff --check` thành công.
+- **Còn lại:** Chưa triển khai frontend và chưa đánh dấu UI-01 hoàn thành.
+
+## 2026-09-21 — UI-01: Giao diện Project List và Upload
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm giao diện React/TypeScript tối thiểu để tải MP4, hiển thị trạng thái, xử lý lỗi thân thiện và tải lại danh sách Project từ API persistence.
+- **Tệp:** `frontend/src/App.tsx`, `frontend/src/index.css`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Frontend chạy qua Vite và hiển thị Project đã persistence sau reload; kiểm tra validation form; upload MP4 thật và upload bị từ chối đã được kiểm chứng qua endpoint backend; `npm run build` và `git diff --check` thành công; không có gọi Supabase trực tiếp trong frontend.
+- **Còn lại:** Chưa thể hoàn tất upload thật bằng browser automation vì môi trường trình duyệt từ chối inject file cục bộ vào native file chooser; chưa đánh dấu UI-01 hoàn thành.
+
+## 2026-09-21 — UI-01: Sửa lỗi reset form sau upload
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Xác định `event.currentTarget` trở thành `null` sau `await` và lưu tham chiếu form ổn định trước boundary bất đồng bộ để reset an toàn sau upload thành công.
+- **Tệp:** `frontend/src/App.tsx`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Kiểm tra submit flow không còn đọc `event.currentTarget` sau `await`; `npm run build` và `git diff --check` thành công.
+- **Còn lại:** Cần manual browser verification cho toàn bộ UI-01; chưa đánh dấu UI-01 hoàn thành.
+
+## 2026-09-22 — UI-01: Hoàn tất kiểm chứng giao diện Project
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đánh dấu UI-01 hoàn tất sau khi developer xác nhận toàn bộ luồng upload và persistence bằng browser thật.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Developer chọn MP4 hợp lệ qua native file picker; upload qua React thành công; form reset không lỗi; Project mới xuất hiện ngay không cần refresh thủ công; refresh trình duyệt vẫn tải Project từ backend persistence; lỗi reset cũ không còn. `npm run build` và `git diff --check` thành công.
+- **Còn lại:** Không.

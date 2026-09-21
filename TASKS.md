@@ -34,7 +34,7 @@
 - [x] `DATA-01` — Implement `Project`, `Job`, `Segment`, and `Artifact` metadata persistence in Supabase-hosted PostgreSQL through FastAPI, using SQLAlchemy and a PostgreSQL driver. Configure the connection only through uncommitted `DATABASE_URL`; use UUID identifiers and timezone-aware timestamps where appropriate. Verified table initialization, connected-record persistence after a new engine/session, foreign-key relationships, constraints, and cleanup through the application connection.
 - [x] `UPLOAD-01` — Store uploaded video under server-generated IDs. Verified real multipart uploads persist Project metadata in Supabase and use only deterministic relative paths under local server-managed storage; hostile filenames cannot control destination paths.
 - [x] `UPLOAD-02` — Validate actual format, configured size, and duration. Verify corrupt, unsupported, and over-limit input is rejected clearly.
-- [ ] `UI-01` — Connect project list/create/upload UI to the API. Verify projects persist across browser refresh.
+- [x] `UI-01` — Connect project list/create/upload UI to the API. Verify projects persist across browser refresh. Evidence: manual browser verification confirmed native MP4 selection, successful React upload, safe form reset, immediate project-list refresh, and persistence after browser refresh.
 
 ## Phase 4 — Jobs and Python worker
 

@@ -6,10 +6,12 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from sqlalchemy import desc, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import create_database_engine, create_session_factory
 from app.models import Project
+from app.schemas import ProjectListItem
 from app.services.uploads import (
     UploadStorageError,
     UploadValidationError,
@@ -19,6 +21,36 @@ from app.services.uploads import (
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+@router.get("", response_model=list[ProjectListItem])
+def list_projects() -> list[ProjectListItem]:
+    """Return persisted projects in deterministic newest-first order."""
+    database_engine = create_database_engine()
+    try:
+        session_factory = create_session_factory(database_engine)
+        with session_factory() as session:
+            projects = session.scalars(
+                select(Project)
+                .order_by(desc(Project.created_at), desc(Project.id))
+            ).all()
+            return [
+                ProjectListItem(
+                    id=project.id,
+                    name=project.name,
+                    status=project.business_status,
+                    source_media_reference=project.source_media_reference,
+                    created_at=project.created_at,
+                )
+                for project in projects
+            ]
+    except SQLAlchemyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to list projects.",
+        ) from error
+    finally:
+        database_engine.dispose()
 
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)

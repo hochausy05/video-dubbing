@@ -114,3 +114,39 @@
 - **Verification:** Real multipart FastAPI requests against Supabase accepted valid and traversal-filename MP4 uploads (201); rejected an AVI (415), 104857601-byte upload (413), corrupt MP4 (422), and 1801-second MP4 (422). Every rejected name had zero Project rows and no residual UUID directory. Verification rows and generated media were deleted; `compileall`, `pip check`, and `git diff --check` passed; `.env` and runtime storage remain ignored.
 - **Result/limits:** UPLOAD-02 is complete. Validation is intentionally limited to MP4 type, configured byte size, container/readability/video stream, and duration; no transcoding or later media pipeline work was added.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `UI-01` — Backend prerequisite for persistent project list
+
+- **AI assistance:** Implemented the minimal FastAPI project-list endpoint with an explicit Pydantic response schema and added the Vite development proxy for `/api` requests.
+- **Developer decision:** Expose the existing relative `source_media_reference` and map the persisted `business_status` column to the stable API field `status`; do not add unpersisted UI fields or direct Supabase access from React.
+- **Affected areas:** `backend/app/api/projects.py`, new project response schemas, `frontend/vite.config.ts`, and append-only task records.
+- **Verification:** Uploaded a real MP4 through the existing endpoint, listed it through FastAPI, read it through a new SQLAlchemy engine/session, confirmed the source reference was not absolute, and reached the same endpoint through `/api/projects` via Vite. Verification data/files were removed; compileall, pip check, frontend build, and `git diff --check` passed.
+- **Result/limits:** The backend prerequisite is ready. UI-01 remains incomplete because frontend implementation is intentionally out of scope.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `UI-01` — React project list and upload flow
+
+- **AI assistance:** Implemented the typed React project list, multipart upload form, loading/empty/submitting/success/error states, client-side MP4/size checks, and accessible minimal styling.
+- **Developer decision:** Keep API calls on the existing `/api` proxy, use only persisted response fields, show source presence without exposing the internal storage reference as a link, and leave backend validation authoritative.
+- **Affected areas:** `frontend/src/App.tsx`, `frontend/src/index.css`, and task audit records.
+- **Verification:** Vite loaded the page without application console errors; persisted backend data appeared in the UI and remained after browser reload; form validation rendered a friendly missing-file error; real valid and rejected files were tested through the existing FastAPI upload contract; `npm run build`, `git diff --check`, and frontend direct-Supabase search passed. Verification records/files were removed.
+- **Result/limits:** Frontend implementation is present, but UI-01 is not complete because the browser automation environment rejected local file injection, so a real upload initiated by the browser UI could not be observed end-to-end.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `UI-01` — Post-upload form reset fix
+
+- **AI assistance:** Inspected the reported successful-upload failure and corrected the async form reset by capturing `event.currentTarget` before the first await.
+- **Developer decision:** Keep the existing upload/list API flow and state behavior unchanged; only replace the unsafe post-await event access.
+- **Affected areas:** `frontend/src/App.tsx` and task audit records.
+- **Verification:** Confirmed the submit handler uses the stable form reference for reset and no longer reads `event.currentTarget` after an async boundary; `npm run build` and `git diff --check` passed.
+- **Result/limits:** The confirmed null-reset bug is fixed. Manual browser verification of the complete upload flow remains required.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `UI-01` — Manual browser acceptance completed
+
+- **AI assistance:** Recorded the developer-provided manual acceptance evidence and updated the task status; no implementation changes were made in this close-out.
+- **Developer decision:** Accept the native file-picker upload, immediate list refresh, safe form reset, and browser-refresh persistence as the final UI-01 evidence.
+- **Affected areas:** `TASKS.md` and append-only task audit records.
+- **Verification:** Developer manually selected a real valid MP4, uploaded it through React, confirmed the form reset and immediate new Project appearance, refreshed the browser, and confirmed the Project persisted with no prior reset error. `npm run build` and `git diff --check` passed.
+- **Result/limits:** UI-01 is complete. No remaining issue was reported.
+- **Commit/issue:** None recorded by the AI assistant.
