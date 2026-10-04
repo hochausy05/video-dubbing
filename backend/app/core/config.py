@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 DATABASE_URL_ENV = "DATABASE_URL"
 MAX_UPLOAD_SIZE_BYTES_ENV = "MAX_UPLOAD_SIZE_BYTES"
 MAX_VIDEO_DURATION_SECONDS_ENV = "MAX_VIDEO_DURATION_SECONDS"
+JOB_WORKER_POLL_INTERVAL_SECONDS_ENV = "JOB_WORKER_POLL_INTERVAL_SECONDS"
 MAX_UPLOAD_SIZE_BYTES = 104_857_600
 MAX_VIDEO_DURATION_SECONDS = 1_800
 
@@ -63,3 +64,22 @@ def get_max_video_duration_seconds() -> int:
     return _get_positive_integer_setting(
         MAX_VIDEO_DURATION_SECONDS_ENV, MAX_VIDEO_DURATION_SECONDS
     )
+
+
+def get_job_worker_poll_interval_seconds() -> float:
+    """Return the worker polling interval, defaulting to a low-load one second."""
+    load_local_environment()
+    configured_value = os.getenv(JOB_WORKER_POLL_INTERVAL_SECONDS_ENV)
+    if configured_value is None:
+        return 1.0
+    try:
+        value = float(configured_value)
+    except ValueError as error:
+        raise RuntimeError(
+            f"{JOB_WORKER_POLL_INTERVAL_SECONDS_ENV} must be a positive number."
+        ) from error
+    if not 0.05 <= value <= 60:
+        raise RuntimeError(
+            f"{JOB_WORKER_POLL_INTERVAL_SECONDS_ENV} must be between 0.05 and 60 seconds."
+        )
+    return value

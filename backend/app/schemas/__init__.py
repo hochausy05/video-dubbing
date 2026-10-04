@@ -1,5 +1,6 @@
 """Stable API response schemas."""
 
 from app.schemas.projects import ProjectListItem
+from app.schemas.jobs import JobCreated
 
-__all__ = ["ProjectListItem"]
+__all__ = ["JobCreated", "ProjectListItem"]

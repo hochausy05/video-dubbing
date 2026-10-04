@@ -40,6 +40,8 @@ Editing translation invalidates artifacts from older revisions. Retry uses a dis
 
 Worker job states: `queued`, `running`, `succeeded`, `failed`, `interrupted`.
 
+For JOB-01, FastAPI persists `queued` Jobs and returns their IDs immediately. The separate Python worker claims the oldest queued Job using a PostgreSQL advisory transaction lock plus `FOR UPDATE SKIP LOCKED`, and permits only one `running` Job at a time. Until a real pipeline handler is added, a claimed Job remains `running`; the worker must not report a false success.
+
 - `stage` identifies detailed processing progress.
 - Persisted error information must be safe to display and useful for diagnosis.
 - Project business state such as `awaiting_review` or `ready` is separate from worker state.

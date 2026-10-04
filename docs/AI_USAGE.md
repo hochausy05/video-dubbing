@@ -150,3 +150,21 @@
 - **Verification:** Developer manually selected a real valid MP4, uploaded it through React, confirmed the form reset and immediate new Project appearance, refreshed the browser, and confirmed the Project persisted with no prior reset error. `npm run build` and `git diff --check` passed.
 - **Result/limits:** UI-01 is complete. No remaining issue was reported.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `JOB-01` — PostgreSQL-backed enqueue and worker foundation
+
+- **AI assistance:** Added a project-scoped FastAPI enqueue route and a separate Python worker that serializes PostgreSQL claims, selects the oldest queued Job, and keeps only one Job in `running` state. Added configurable polling and documented the no-pipeline behavior.
+- **Developer decision:** Reuse existing Job fields and Supabase PostgreSQL; do not add a queue dependency, schema fields, or fake successful processing.
+- **Affected areas:** Backend project API, job response schema, worker, backend configuration, architecture/task records, and append-only logs.
+- **Verification:** `python -m compileall -q app`, `python -m pip check`, and FastAPI import/OpenAPI route inspection passed. A runtime SQLAlchemy connection returned Supabase ENOTFOUND tenant/user; Supabase MCP schema inspection timed out while the project listing reported the database inactive.
+- **Result/limits:** Code foundation is present, but live Job persistence, separate-process claiming, sequential behavior, and persistence after reconnect remain unverified. JOB-01 remains incomplete.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `JOB-01` — Live Supabase verification completed
+
+- **AI assistance:** Ran the real FastAPI enqueue flow against the configured Supabase PostgreSQL database, launched the worker as a separate Python process, verified sequential claiming and fresh-connection persistence, and cleaned up only the temporary Project and Jobs created for this run.
+- **Developer decision:** Leave a claimed Job `running`/`claimed` until a real processing pipeline exists; do not mark it successful or add recovery behavior in JOB-01.
+- **Affected areas:** `TASKS.md` and append-only task audit records; no implementation changes were needed during live verification.
+- **Verification:** SQLAlchemy connected successfully. Both HTTP enqueue requests returned 202 promptly with `queued`; the independent worker claimed the first Job as `running`/`claimed`, while the second stayed `queued`. API and worker had distinct live PIDs. A new engine/session and Supabase MCP confirmed the persisted rows; temporary records were deleted. `compileall`, `pip check`, `git diff --check`, and ignore/secret checks passed; unittest discovery found no tests.
+- **Result/limits:** JOB-01 acceptance is complete. The worker intentionally leaves the claimed verification Job running; all verification data was removed afterward. Supabase MCP reported RLS disabled on the existing public tables; that unrelated schema setting was left unchanged.
+- **Commit/issue:** None recorded by the AI assistant.

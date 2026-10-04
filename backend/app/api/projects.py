@@ -10,8 +10,8 @@ from sqlalchemy import desc, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import create_database_engine, create_session_factory
-from app.models import Project
-from app.schemas import ProjectListItem
+from app.models import Job, JobStatus, Project
+from app.schemas import JobCreated, ProjectListItem
 from app.services.uploads import (
     UploadStorageError,
     UploadValidationError,
@@ -21,6 +21,38 @@ from app.services.uploads import (
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+@router.post("/{project_id}/jobs", response_model=JobCreated, status_code=status.HTTP_202_ACCEPTED)
+def enqueue_project_job(project_id: uuid.UUID) -> JobCreated:
+    """Persist an analysis job and return without performing media work."""
+    database_engine = create_database_engine()
+    try:
+        session_factory = create_session_factory(database_engine)
+        with session_factory() as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Project not found.",
+                )
+            job = Job(
+                project_id=project.id,
+                operation_type="transcribe_translate",
+                input_revision=project.current_revision,
+                status=JobStatus.QUEUED.value,
+            )
+            session.add(job)
+            session.commit()
+            session.refresh(job)
+            return JobCreated(id=job.id, project_id=job.project_id, status=job.status)
+    except SQLAlchemyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to enqueue the project job.",
+        ) from error
+    finally:
+        database_engine.dispose()
 
 
 @router.get("", response_model=list[ProjectListItem])

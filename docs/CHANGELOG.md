@@ -151,3 +151,19 @@
 - **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Developer chọn MP4 hợp lệ qua native file picker; upload qua React thành công; form reset không lỗi; Project mới xuất hiện ngay không cần refresh thủ công; refresh trình duyệt vẫn tải Project từ backend persistence; lỗi reset cũ không còn. `npm run build` và `git diff --check` thành công.
 - **Còn lại:** Không.
+
+## 2026-10-04 — JOB-01: API enqueue và worker tuần tự
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm endpoint tạo Job `queued` trả về ID ngay và worker Python riêng claim tuần tự qua PostgreSQL; không đánh dấu thành công khi chưa có pipeline.
+- **Tệp:** `.env.example`, `TASKS.md`, `backend/app/api/projects.py`, `backend/app/core/config.py`, `backend/app/schemas/__init__.py`, `backend/app/schemas/jobs.py`, `backend/app/workers/__init__.py`, `backend/app/workers/job_worker.py`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** `compileall`, `pip check` và import/OpenAPI route thành công. Kết nối SQLAlchemy và truy vấn schema Supabase không thành công: dự án được báo inactive; runtime trả lỗi ENOTFOUND tenant/user và MCP hết thời gian chờ.
+- **Còn lại:** Chưa xác minh enqueue/persistence và claim bằng worker riêng trên Supabase thật; JOB-01 chưa hoàn tất.
+
+## 2026-10-04 — JOB-01: Hoàn tất kiểm chứng Supabase
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Xác minh luồng enqueue qua FastAPI và claim bằng tiến trình worker riêng; đánh dấu JOB-01 hoàn tất. Job đã claim giữ trạng thái `running`/`claimed` do pipeline xử lý chưa thuộc phạm vi.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** SQLAlchemy kết nối Supabase thành công; endpoint thật trả HTTP 202 và Job `queued` trong 2.5 giây; worker riêng claim Job đầu thành `running`/`claimed`, Job thứ hai vẫn `queued`; PID API/worker khác nhau; MCP và engine/session mới xác nhận dữ liệu; đã xóa Project cùng hai Job kiểm chứng. `compileall`, `pip check`, unittest discovery (0 bài test), `git diff --check` và kiểm tra ignore/secret đều đạt.
+- **Còn lại:** Không còn việc thuộc JOB-01; Job chạy được giữ `running` tới khi có pipeline thật ở nhiệm vụ sau.

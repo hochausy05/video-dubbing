@@ -9,10 +9,10 @@
 
 ## Current Task
 
-- **Phase:** 3 — Supabase PostgreSQL, projects, and upload
-- **Task:** `DATA-01`
-- **Next after verified completion:** See the Phase 3 task list.
-- **Scope:** See the `DATA-01` task entry below.
+- **Phase:** 4 — Jobs and Python worker
+- **Task:** `JOB-02`
+- **Next after verified completion:** See the Phase 4 task list.
+- **Scope:** See the `JOB-02` task entry below.
 
 ## Phase 1 — Documents and environment
 
@@ -38,7 +38,7 @@
 
 ## Phase 4 — Jobs and Python worker
 
-- [ ] `JOB-01` — Add a separate sequential Python worker. Verify the API persists/returns a job ID and the worker claims one queued job at a time.
+- [x] `JOB-01` — Add a separate sequential Python worker. Evidence: SQLAlchemy connected to the active Supabase project; FastAPI returned a real Job ID and `queued` within 2.5 seconds; a separate worker process claimed that Job as `running`/`claimed`, while a second persisted Job stayed `queued`; new SQLAlchemy engine/session and Supabase MCP confirmed both records; verification Project/Jobs were removed; compileall, pip check, and repository checks passed. Claimed Jobs remain `running` until a real pipeline is implemented.
 - [ ] `JOB-02` — Persist job state, stage, errors, and interrupted-job policy. Verify refresh/restart does not silently lose or strand work.
 - [ ] `UI-02` — Display backend job state/stage. Verify the UI does not invent progress percentages.
 
