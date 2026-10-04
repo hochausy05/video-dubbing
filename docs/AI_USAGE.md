@@ -177,3 +177,21 @@
 - **Verification:** Against real Supabase, confirmed API `queued`/GET state; separate worker `running`/`claimed` and `started_at`; forced worker termination followed by startup recovery to `interrupted` with a reason and finish time; retry kept the original unchanged and created a new queued Job; queued/running retries returned 409; failure helper persisted a bounded path-redacted summary and finish time; next Job claimed only after the prior one failed. Fresh SQLAlchemy sessions and Supabase MCP confirmed records; only test Project and Jobs were deleted. `compileall`, `pip check`, `git diff --check`, and secret/ignore checks passed; unittest discovery found no tests.
 - **Result/limits:** JOB-02 is complete. No Job was marked succeeded. Existing lifecycle columns were sufficient, so Supabase schema/data outside verification rows was unchanged.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `UI-02` — Real persisted Job status and stage UI
+
+- **AI assistance:** Added the typed Project-scoped Job listing endpoint and connected the existing React project list to enqueue, recover, display, and poll persisted Job lifecycle state.
+- **Developer decision:** Keep FastAPI as the only frontend data boundary, poll only queued/running Jobs at a four-second interval, show only persisted stage/error/timestamps, and never imply pipeline completion or numeric progress.
+- **Affected areas:** `backend/app/api/projects.py`, `frontend/src/App.tsx`, `frontend/src/index.css`, `docs/ARCHITECTURE.md`, and task audit records.
+- **Verification:** Against real Supabase through FastAPI/Vite, the UI created a queued Job with the worker stopped, recovered the same Job after refresh, displayed running/claimed after a separate worker claimed it, and displayed interrupted plus its safe reason after worker restart. Verification rows were removed. `npm run build`, backend `compileall`, `pip check`, unittest discovery (0 tests), `git diff --check`, frontend Supabase/progress search, and secret/ignore checks passed.
+- **Result/limits:** UI-02 is complete. Jobs remain `running` until a worker restart marks uncompleted work interrupted; no ASR/translation pipeline was added.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `UI-02` — Manual browser acceptance close-out
+
+- **AI assistance:** Recorded the developer's final manual browser acceptance and clarified the UI-02 task evidence; no implementation changes were needed.
+- **Developer decision:** Accept the real queued state, reload recovery of the same persisted Job, worker-driven `running`/`claimed` state, worker-restart `interrupted` state, and the absence of fabricated percentage progress.
+- **Affected areas:** `TASKS.md` and append-only task audit records.
+- **Verification:** The developer confirmed the end-to-end browser flow against the backend. `npm run build` and `git diff --check` passed during this close-out.
+- **Result/limits:** UI-02 is complete. The worker still has no ASR/translation pipeline, which remains out of scope.
+- **Commit/issue:** None recorded by the AI assistant.

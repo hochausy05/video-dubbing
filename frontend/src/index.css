@@ -205,9 +205,9 @@ button:focus-visible {
 }
 
 .project-item {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
+  align-items: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 1rem;
   padding: 1.1rem 1.2rem;
 }
@@ -221,6 +221,82 @@ button:focus-visible {
   display: grid;
   gap: 0.35rem;
   justify-items: end;
+}
+
+.project-job {
+  align-items: start;
+  border-top: 1px solid #edf0f5;
+  display: flex;
+  gap: 1rem;
+  grid-column: 1 / -1;
+  justify-content: space-between;
+  padding-top: 0.9rem;
+}
+
+.project-job button {
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.job-state h4 {
+  font-size: 0.82rem;
+  margin: 0 0 0.45rem;
+}
+
+.job-status-line {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.job-stage,
+.job-timestamps,
+.job-error,
+.inline-error {
+  color: #66748c;
+  font-size: 0.8rem;
+  margin: 0.4rem 0 0;
+}
+
+.job-status-succeeded {
+  background: #eaf8ef;
+  color: #23733e;
+}
+
+.job-status-failed,
+.job-status-interrupted {
+  background: #fff0f0;
+  color: #a52a2a;
+}
+
+.job-status-running {
+  background: #fff4df;
+  color: #855200;
+}
+
+.job-timestamps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+}
+
+.job-timestamps div {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.job-timestamps dt {
+  font-weight: 700;
+}
+
+.job-timestamps dd {
+  margin: 0;
+}
+
+.job-error,
+.inline-error {
+  color: #a52a2a;
 }
 
 .status-badge {
@@ -251,10 +327,20 @@ button:focus-visible {
   .project-item {
     align-items: start;
     display: grid;
+    grid-template-columns: 1fr;
   }
 
   .project-meta {
     align-items: start;
     justify-items: start;
+  }
+
+  .project-job {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .project-job button {
+    align-self: start;
   }
 }

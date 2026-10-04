@@ -175,3 +175,19 @@
 - **Tệp:** `backend/app/api/jobs.py`, `backend/app/api/projects.py`, `backend/app/main.py`, `backend/app/schemas/__init__.py`, `backend/app/schemas/jobs.py`, `backend/app/workers/job_worker.py`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Trên Supabase thật, API tạo và đọc Job `queued`; worker riêng ghi `running`/`claimed` và `started_at`; sau khi dừng worker, tiến trình mới ghi `interrupted`, stage, lý do an toàn và `completed_at`. Retry tạo ID mới, giữ nguyên Job gốc; retry ở trạng thái queued/running bị từ chối HTTP 409. Helper failure lưu lỗi đã giới hạn và loại đường dẫn; Job tiếp theo chỉ được claim sau khi Job trước chuyển failed. SQLAlchemy session mới và MCP xác nhận dữ liệu; đã xóa Project cùng ba Job kiểm chứng. `compileall`, `pip check`, `git diff --check`, kiểm tra secret/ignore đạt; unittest discovery không tìm thấy test.
 - **Còn lại:** Không trong JOB-02; chỉ pipeline thật mới được chuyển Job sang succeeded.
+
+## 2026-10-04 — UI-02: Hiển thị trạng thái Job thật
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Thêm API liệt kê Job theo Project mới nhất trước; React tạo Job, khôi phục trạng thái từ backend sau khi tải lại, hiển thị stage/lỗi an toàn/mốc thời gian và chỉ thăm dò khi Job đang queued hoặc running.
+- **Tệp:** `backend/app/api/projects.py`, `frontend/src/App.tsx`, `frontend/src/index.css`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Trên Supabase thật, thao tác UI tạo Job `queued` khi worker dừng; refresh khôi phục cùng Job; worker Python riêng cập nhật UI sang `running`/`claimed`; khởi động lại worker cập nhật UI sang `interrupted` với lý do an toàn đã lưu. Đã xóa Project/Jobs kiểm chứng. `npm run build`, `compileall`, `pip check`, `git diff --check`, kiểm tra secret/ignore đạt; không có test phù hợp trong thư mục tests.
+- **Còn lại:** Không trong UI-02; Job vẫn không hoàn tất cho tới khi có pipeline xử lý thật.
+
+## 2026-10-04 — UI-02: Xác nhận thủ công trên trình duyệt
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Bổ sung xác nhận nghiệm thu thủ công cho luồng UI-02; giữ nguyên implementation và dữ liệu persistence hiện có.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Developer xác nhận UI tạo Job thật ở trạng thái `queued`, tải lại trang khôi phục cùng Job từ backend, worker riêng cập nhật UI sang `running`/`claimed`, và khởi động lại worker cập nhật UI sang `interrupted`. Không có phần trăm tiến độ giả. `npm run build` và `git diff --check` thành công.
+- **Còn lại:** Không trong UI-02.

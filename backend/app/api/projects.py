@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import create_database_engine, create_session_factory
 from app.models import Job, JobStatus, Project
-from app.schemas import JobCreated, ProjectListItem
+from app.schemas import JobCreated, JobDetail, ProjectListItem
 from app.services.uploads import (
     UploadStorageError,
     UploadValidationError,
@@ -81,6 +81,47 @@ def list_projects() -> list[ProjectListItem]:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unable to list projects.",
+        ) from error
+    finally:
+        database_engine.dispose()
+
+
+@router.get("/{project_id}/jobs", response_model=list[JobDetail])
+def list_project_jobs(project_id: uuid.UUID) -> list[JobDetail]:
+    """Return persisted Jobs for a Project, newest first, for UI state recovery."""
+    database_engine = create_database_engine()
+    try:
+        session_factory = create_session_factory(database_engine)
+        with session_factory() as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Project not found.",
+                )
+            jobs = session.scalars(
+                select(Job)
+                .where(Job.project_id == project_id)
+                .order_by(desc(Job.created_at), desc(Job.id))
+            ).all()
+            return [
+                JobDetail(
+                    id=job.id,
+                    project_id=job.project_id,
+                    job_type=job.operation_type,
+                    status=job.status,
+                    stage=job.stage,
+                    error=job.safe_error,
+                    created_at=job.created_at,
+                    started_at=job.started_at,
+                    finished_at=job.completed_at,
+                )
+                for job in jobs
+            ]
+    except SQLAlchemyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to list project Jobs.",
         ) from error
     finally:
         database_engine.dispose()
