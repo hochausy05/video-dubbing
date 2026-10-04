@@ -167,3 +167,11 @@
 - **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** SQLAlchemy kết nối Supabase thành công; endpoint thật trả HTTP 202 và Job `queued` trong 2.5 giây; worker riêng claim Job đầu thành `running`/`claimed`, Job thứ hai vẫn `queued`; PID API/worker khác nhau; MCP và engine/session mới xác nhận dữ liệu; đã xóa Project cùng hai Job kiểm chứng. `compileall`, `pip check`, unittest discovery (0 bài test), `git diff --check` và kiểm tra ignore/secret đều đạt.
 - **Còn lại:** Không còn việc thuộc JOB-01; Job chạy được giữ `running` tới khi có pipeline thật ở nhiệm vụ sau.
+
+## 2026-10-04 — JOB-02: Trạng thái bền vững và khôi phục Job
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Thêm API đọc trạng thái và retry bằng Job mới; thêm chuyển trạng thái succeeded/failed, làm sạch lỗi an toàn, và đánh dấu Job đang chạy bị bỏ dở là interrupted khi worker khởi động lại. Dùng lại các cột timestamp hiện có, không đổi schema.
+- **Tệp:** `backend/app/api/jobs.py`, `backend/app/api/projects.py`, `backend/app/main.py`, `backend/app/schemas/__init__.py`, `backend/app/schemas/jobs.py`, `backend/app/workers/job_worker.py`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Trên Supabase thật, API tạo và đọc Job `queued`; worker riêng ghi `running`/`claimed` và `started_at`; sau khi dừng worker, tiến trình mới ghi `interrupted`, stage, lý do an toàn và `completed_at`. Retry tạo ID mới, giữ nguyên Job gốc; retry ở trạng thái queued/running bị từ chối HTTP 409. Helper failure lưu lỗi đã giới hạn và loại đường dẫn; Job tiếp theo chỉ được claim sau khi Job trước chuyển failed. SQLAlchemy session mới và MCP xác nhận dữ liệu; đã xóa Project cùng ba Job kiểm chứng. `compileall`, `pip check`, `git diff --check`, kiểm tra secret/ignore đạt; unittest discovery không tìm thấy test.
+- **Còn lại:** Không trong JOB-02; chỉ pipeline thật mới được chuyển Job sang succeeded.

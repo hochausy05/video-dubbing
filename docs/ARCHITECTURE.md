@@ -42,6 +42,8 @@ Worker job states: `queued`, `running`, `succeeded`, `failed`, `interrupted`.
 
 For JOB-01, FastAPI persists `queued` Jobs and returns their IDs immediately. The separate Python worker claims the oldest queued Job using a PostgreSQL advisory transaction lock plus `FOR UPDATE SKIP LOCKED`, and permits only one `running` Job at a time. Until a real pipeline handler is added, a claimed Job remains `running`; the worker must not report a false success.
 
+For JOB-02, enqueue and retry set both status and stage to `queued`. Claim sets status to `running`, stage to `claimed`, records `started_at`, and clears stale error/completion values. The worker holds a PostgreSQL session advisory lock for its process lifetime; only after acquiring that lock does startup recovery change prior `running` Jobs to `interrupted`, set stage and `completed_at`, and store a safe reason. Interrupted work remains history and is never automatically requeued. Retry creates a new Job with the original Project, operation type, and input revision. `GET /jobs/{job_id}` returns persisted lifecycle fields; API `finished_at` maps to the existing timezone-aware `completed_at` column. Worker transition helpers set `succeeded`/`failed` only after real work or an explicit failure, record `completed_at`, clear success errors, and bound/redact failure summaries.
+
 - `stage` identifies detailed processing progress.
 - Persisted error information must be safe to display and useful for diagnosis.
 - Project business state such as `awaiting_review` or `ready` is separate from worker state.
@@ -62,7 +64,7 @@ Persistent entities use UUID identifiers and timezone-aware timestamps where app
 
 - Create/list/read projects.
 - Upload and retrieve controlled source video.
-- Create transcribe/translate jobs and read job status.
+- Create transcribe/translate jobs, read persisted job lifecycle state, and explicitly retry failed or interrupted Jobs as new records.
 - Read/edit segments and confirm a translation revision.
 - Create TTS/render jobs.
 - Preview/download artifacts for the current project/revision.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import time
 from uuid import UUID
 
@@ -16,7 +17,24 @@ from app.models import Job, JobStatus
 
 
 logger = logging.getLogger("autodub.worker")
-_WORKER_LOCK_KEY = 7_314_209_018
+_WORKER_PROCESS_LOCK_KEY = 7_314_209_019
+_WORKER_CLAIM_LOCK_KEY = 7_314_209_018
+_SAFE_ERROR_MAX_LENGTH = 500
+_CONNECTION_URL_RE = re.compile(r"(?i)\b(?:postgres(?:ql)?(?:\+[\w]+)?|https?)://\S+")
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(DATABASE_URL|[A-Z0-9_-]*(?:API[_ -]?KEY|TOKEN|SECRET|PASSWORD))\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|\S+)"
+)
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+\S+")
+_WINDOWS_PATH_RE = re.compile(r"\b[A-Za-z]:[\\/][^\s,;]+")
+_UNIX_PATH_RE = re.compile(r"(?<![:\w])/(?:[^\s,;]+)")
+
+
+class JobNotFoundError(LookupError):
+    """A requested persisted Job does not exist."""
+
+
+class JobTransitionError(RuntimeError):
+    """A Job is not in a state that permits the requested transition."""
 
 
 def claim_next_job(engine: Engine) -> UUID | None:
@@ -25,7 +43,7 @@ def claim_next_job(engine: Engine) -> UUID | None:
         # Serialize claimers across processes and keep the MVP to one active job.
         connection.execute(
             text("SELECT pg_advisory_xact_lock(:lock_key)"),
-            {"lock_key": _WORKER_LOCK_KEY},
+            {"lock_key": _WORKER_CLAIM_LOCK_KEY},
         )
         active_job_id = connection.scalar(
             select(Job.id).where(Job.status == JobStatus.RUNNING.value).limit(1)
@@ -50,20 +68,121 @@ def claim_next_job(engine: Engine) -> UUID | None:
                 status=JobStatus.RUNNING.value,
                 stage="claimed",
                 started_at=func.now(),
+                completed_at=None,
+                safe_error=None,
             )
             .returning(Job.id)
         )
     return claimed_id
 
 
-def run_worker(*, poll_interval: float, once: bool = False) -> None:
-    """Poll and claim one job; keep polling while the claimed job remains active.
+def recover_abandoned_jobs(engine: Engine) -> tuple[UUID, ...]:
+    """Mark running Jobs from the prior worker process as interrupted history."""
+    with engine.begin() as connection:
+        connection.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": _WORKER_CLAIM_LOCK_KEY},
+        )
+        job_ids = connection.execute(
+            update(Job)
+            .where(Job.status == JobStatus.RUNNING.value)
+            .values(
+                status=JobStatus.INTERRUPTED.value,
+                stage="interrupted",
+                safe_error="Worker restarted before this job completed.",
+                completed_at=func.now(),
+            )
+            .returning(Job.id)
+        ).scalars().all()
+    return tuple(job_ids)
 
-    JOB-01 intentionally has no processing handler. Claimed jobs remain `running`
-    until a later pipeline task supplies real work and terminal state transitions.
-    """
+
+def safe_error_summary(message: str) -> str:
+    """Bound and redact a one-line error summary before persisting it."""
+    first_line = (message or "").strip().splitlines()[0:1]
+    summary = " ".join(first_line[0].split()) if first_line else ""
+    if summary.lower().startswith("traceback (most recent call last)"):
+        summary = "Job failed; detailed error omitted."
+    summary = _CONNECTION_URL_RE.sub("[connection details omitted]", summary)
+    summary = _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[redacted]", summary)
+    summary = _BEARER_RE.sub("Bearer [redacted]", summary)
+    summary = _WINDOWS_PATH_RE.sub("[path omitted]", summary)
+    summary = _UNIX_PATH_RE.sub("[path omitted]", summary)
+    summary = summary[:_SAFE_ERROR_MAX_LENGTH].strip()
+    return summary or "Job failed; details omitted."
+
+
+def _finish_running_job(
+    engine: Engine,
+    job_id: UUID,
+    *,
+    status_value: str,
+    stage: str,
+    safe_error: str | None,
+) -> None:
+    with engine.begin() as connection:
+        updated_id = connection.scalar(
+            update(Job)
+            .where(Job.id == job_id, Job.status == JobStatus.RUNNING.value)
+            .values(
+                status=status_value,
+                stage=stage,
+                safe_error=safe_error,
+                completed_at=func.now(),
+            )
+            .returning(Job.id)
+        )
+        if updated_id is not None:
+            return
+        current_status = connection.scalar(select(Job.status).where(Job.id == job_id))
+        if current_status is None:
+            raise JobNotFoundError("Job not found.")
+        raise JobTransitionError(f"Job in state {current_status!r} cannot be finished.")
+
+
+def mark_job_succeeded(engine: Engine, job_id: UUID) -> None:
+    """Persist a success transition for completed real work."""
+    _finish_running_job(
+        engine,
+        job_id,
+        status_value=JobStatus.SUCCEEDED.value,
+        stage="completed",
+        safe_error=None,
+    )
+
+
+def mark_job_failed(engine: Engine, job_id: UUID, error_summary: str) -> None:
+    """Persist a bounded safe failure summary for a running Job."""
+    _finish_running_job(
+        engine,
+        job_id,
+        status_value=JobStatus.FAILED.value,
+        stage="failed",
+        safe_error=safe_error_summary(error_summary),
+    )
+
+
+def run_worker(*, poll_interval: float, once: bool = False) -> None:
+    """Recover abandoned work, then poll and claim sequentially under one worker lock."""
     engine = create_database_engine()
+    worker_connection = engine.connect()
+    owns_worker_lock = False
     try:
+        owns_worker_lock = bool(
+            worker_connection.scalar(
+                text("SELECT pg_try_advisory_lock(:lock_key)"),
+                {"lock_key": _WORKER_PROCESS_LOCK_KEY},
+            )
+        )
+        worker_connection.commit()
+        if not owns_worker_lock:
+            logger.warning("Another worker process already owns the worker lock; exiting.")
+            return
+
+        recovered_job_ids = recover_abandoned_jobs(engine)
+        if recovered_job_ids:
+            logger.info("Marked %d abandoned job(s) interrupted.", len(recovered_job_ids))
+
         while True:
             job_id = claim_next_job(engine)
             if job_id is not None:
@@ -74,6 +193,13 @@ def run_worker(*, poll_interval: float, once: bool = False) -> None:
                 return
             time.sleep(poll_interval)
     finally:
+        if owns_worker_lock:
+            worker_connection.scalar(
+                text("SELECT pg_advisory_unlock(:lock_key)"),
+                {"lock_key": _WORKER_PROCESS_LOCK_KEY},
+            )
+            worker_connection.commit()
+        worker_connection.close()
         engine.dispose()
 
 

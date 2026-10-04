@@ -10,9 +10,9 @@
 ## Current Task
 
 - **Phase:** 4 — Jobs and Python worker
-- **Task:** `JOB-02`
-- **Next after verified completion:** See the Phase 4 task list.
-- **Scope:** See the `JOB-02` task entry below.
+- **Task:** `UI-02`
+- **Next after verified completion:** `ASR-01`.
+- **Scope:** See the `UI-02` task entry below.
 
 ## Phase 1 — Documents and environment
 
@@ -39,7 +39,7 @@
 ## Phase 4 — Jobs and Python worker
 
 - [x] `JOB-01` — Add a separate sequential Python worker. Evidence: SQLAlchemy connected to the active Supabase project; FastAPI returned a real Job ID and `queued` within 2.5 seconds; a separate worker process claimed that Job as `running`/`claimed`, while a second persisted Job stayed `queued`; new SQLAlchemy engine/session and Supabase MCP confirmed both records; verification Project/Jobs were removed; compileall, pip check, and repository checks passed. Claimed Jobs remain `running` until a real pipeline is implemented.
-- [ ] `JOB-02` — Persist job state, stage, errors, and interrupted-job policy. Verify refresh/restart does not silently lose or strand work.
+- [x] `JOB-02` — Persist job state, stage, errors, and interrupted-job policy. Evidence: on Supabase, API GET returned persisted queue/claim/interruption/failure fields; killing a claimed worker then starting a fresh process changed the abandoned Job to `interrupted` with stage, safe reason and completion time; retry created a distinct queued Job and left the original unchanged; retries of queued and running Jobs returned 409; bounded failure transition persisted a path-redacted error; another Job stayed queued until only one running slot was free; fresh SQLAlchemy sessions confirmed timezone-aware lifecycle timestamps; verification Project/Jobs were removed; compileall, pip check and repository checks passed. Jobs are not completed without a real handler.
 - [ ] `UI-02` — Display backend job state/stage. Verify the UI does not invent progress percentages.
 
 ## Phase 5 — Whisper transcript

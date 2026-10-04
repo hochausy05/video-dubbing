@@ -168,3 +168,12 @@
 - **Verification:** SQLAlchemy connected successfully. Both HTTP enqueue requests returned 202 promptly with `queued`; the independent worker claimed the first Job as `running`/`claimed`, while the second stayed `queued`. API and worker had distinct live PIDs. A new engine/session and Supabase MCP confirmed the persisted rows; temporary records were deleted. `compileall`, `pip check`, `git diff --check`, and ignore/secret checks passed; unittest discovery found no tests.
 - **Result/limits:** JOB-01 acceptance is complete. The worker intentionally leaves the claimed verification Job running; all verification data was removed afterward. Supabase MCP reported RLS disabled on the existing public tables; that unrelated schema setting was left unchanged.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `JOB-02` — Persisted lifecycle, interruption recovery, and retry
+
+- **AI assistance:** Extended the existing Job lifecycle with safe success/failure transition helpers, restart recovery under a worker-process advisory lock, typed read/retry endpoints, and persisted queue/claim timestamps. Reused `safe_error`, `started_at`, and timezone-aware `completed_at`; no migration was needed.
+- **Developer decision:** Preserve interrupted/failed Jobs as history, create a new record for retry, never automatically resume work, and leave verification Jobs short of `succeeded` because no real processing pipeline exists.
+- **Affected areas:** Job API/schema, project enqueue stage, worker lifecycle, FastAPI router registration, architecture/task status, and append-only audit records.
+- **Verification:** Against real Supabase, confirmed API `queued`/GET state; separate worker `running`/`claimed` and `started_at`; forced worker termination followed by startup recovery to `interrupted` with a reason and finish time; retry kept the original unchanged and created a new queued Job; queued/running retries returned 409; failure helper persisted a bounded path-redacted summary and finish time; next Job claimed only after the prior one failed. Fresh SQLAlchemy sessions and Supabase MCP confirmed records; only test Project and Jobs were deleted. `compileall`, `pip check`, `git diff --check`, and secret/ignore checks passed; unittest discovery found no tests.
+- **Result/limits:** JOB-02 is complete. No Job was marked succeeded. Existing lifecycle columns were sufficient, so Supabase schema/data outside verification rows was unchanged.
+- **Commit/issue:** None recorded by the AI assistant.

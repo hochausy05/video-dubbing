@@ -41,6 +41,7 @@ def enqueue_project_job(project_id: uuid.UUID) -> JobCreated:
                 operation_type="transcribe_translate",
                 input_revision=project.current_revision,
                 status=JobStatus.QUEUED.value,
+                stage="queued",
             )
             session.add(job)
             session.commit()
