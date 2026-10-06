@@ -26,6 +26,15 @@ coverage/
 # Runtime data: keep only the empty directory marker
 /storage/*
 !/storage/.gitkeep
+
+# ML model and download caches
+.cache/
+/models/
+/backend/models/
+/backend/model_cache/
+model.bin
+*.safetensors
+
 *.db
 *.db-*
 *.sqlite

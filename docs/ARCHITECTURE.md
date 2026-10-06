@@ -19,12 +19,12 @@ Frontend calls FastAPI only. FastAPI and the worker access Supabase-hosted Postg
 ## Pipeline A — Transcribe and translate
 
 1. FastAPI streams an uploaded source into UUID-controlled local storage, enforcing the configured byte limit, then uses `ffprobe` to validate an actual MP4 video and its configured duration limit before persisting the Project. The canonical limits are in `docs/PRD.md` and backend configuration.
-2. The worker reads the source and runs Whisper, initially targeting model `small`.
-3. It validates ordered segments with stable IDs, timestamps, and source text.
+2. The worker resolves only the Project's UUID-derived source path under managed storage and runs faster-whisper model `small`.
+3. It validates and transactionally persists ordered Segments with stable IDs, timestamps, and source text. Re-transcription replaces only unedited Segments for the same Project revision; translated, revision-changed, or warning-bearing Segments are preserved and cause a safe failure.
 4. It sends required segment text to Gemini and stores Vietnamese text separately.
 5. It persists the result and finishes; it does not wait while the user reviews text.
 
-GPU Whisper is an optimization only after `ASR-01` verifies compatibility. CPU remains the fallback.
+The worker loads and reuses one Whisper model instance per process. It attempts CUDA `float16` inference, logs the reason if CUDA initialization/inference fails, and falls back to CPU `int8`. CPU inference is verified; GPU inference is not claimed unless the full inference succeeds.
 
 ## Pipeline B — Generate speech and render
 
@@ -40,9 +40,9 @@ Editing translation invalidates artifacts from older revisions. Retry uses a dis
 
 Worker job states: `queued`, `running`, `succeeded`, `failed`, `interrupted`.
 
-For JOB-01, FastAPI persists `queued` Jobs and returns their IDs immediately. The separate Python worker claims the oldest queued Job using a PostgreSQL advisory transaction lock plus `FOR UPDATE SKIP LOCKED`, and permits only one `running` Job at a time. Until a real pipeline handler is added, a claimed Job remains `running`; the worker must not report a false success.
+For JOB-01, FastAPI persists `queued` Jobs and returns their IDs immediately. The separate Python worker claims the oldest queued Job using a PostgreSQL advisory transaction lock plus `FOR UPDATE SKIP LOCKED`, and permits only one `running` Job at a time.
 
-For JOB-02, enqueue and retry set both status and stage to `queued`. Claim sets status to `running`, stage to `claimed`, records `started_at`, and clears stale error/completion values. The worker holds a PostgreSQL session advisory lock for its process lifetime; only after acquiring that lock does startup recovery change prior `running` Jobs to `interrupted`, set stage and `completed_at`, and store a safe reason. Interrupted work remains history and is never automatically requeued. Retry creates a new Job with the original Project, operation type, and input revision. `GET /jobs/{job_id}` returns persisted lifecycle fields; `GET /projects/{project_id}/jobs` returns that Project's persisted Jobs newest first for UI reload recovery. API `finished_at` maps to the existing timezone-aware `completed_at` column. Worker transition helpers set `succeeded`/`failed` only after real work or an explicit failure, record `completed_at`, clear success errors, and bound/redact failure summaries.
+For JOB-02, enqueue and retry set both status and stage to `queued`. Claim sets status to `running`, stage to `claimed`, records `started_at`, and clears stale error/completion values. ASR sets `preparing_asr`, `transcribing`, and finally `transcript_ready` or `no_speech`. Because the existing operation type is the combined `transcribe_translate` Job, completion of ASR alone leaves the Job `running`; it must not be reported as `succeeded` until translation is implemented. The worker holds a PostgreSQL session advisory lock for its process lifetime; only after acquiring that lock does startup recovery change prior `running` Jobs to `interrupted`, set stage and `completed_at`, and store a safe reason. Interrupted work remains history and is never automatically requeued. Retry creates a new Job with the original Project, operation type, and input revision. `GET /jobs/{job_id}` returns persisted lifecycle fields; `GET /projects/{project_id}/jobs` returns that Project's persisted Jobs newest first for UI reload recovery. API `finished_at` maps to the existing timezone-aware `completed_at` column. Worker transition helpers set `succeeded`/`failed` only after real work or an explicit failure, record `completed_at`, clear success errors, and bound/redact failure summaries.
 
 - `stage` identifies detailed processing progress.
 - Persisted error information must be safe to display and useful for diagnosis.

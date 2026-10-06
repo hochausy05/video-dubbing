@@ -10,10 +10,12 @@ from uuid import UUID
 
 from sqlalchemy import func, select, text, update
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from app.core.config import get_job_worker_poll_interval_seconds
 from app.core.database import create_database_engine
 from app.models import Job, JobStatus
+from app.services.asr import transcribe_project
 
 
 logger = logging.getLogger("autodub.worker")
@@ -162,6 +164,65 @@ def mark_job_failed(engine: Engine, job_id: UUID, error_summary: str) -> None:
     )
 
 
+def _set_running_job_stage(engine: Engine, job_id: UUID, stage: str) -> None:
+    with engine.begin() as connection:
+        updated_id = connection.scalar(
+            update(Job)
+            .where(Job.id == job_id, Job.status == JobStatus.RUNNING.value)
+            .values(stage=stage)
+            .returning(Job.id)
+        )
+        if updated_id is None:
+            raise JobTransitionError("The Job is no longer running.")
+
+
+def process_claimed_job(engine: Engine, job_id: UUID) -> None:
+    """Run the implemented ASR stage without falsely completing translation Jobs."""
+    try:
+        with Session(engine) as session:
+            job = session.get(Job, job_id)
+            if job is None:
+                raise JobNotFoundError("Job not found.")
+            if job.status != JobStatus.RUNNING.value:
+                raise JobTransitionError("The Job is no longer running.")
+            if job.operation_type != "transcribe_translate":
+                raise JobTransitionError("This Job type is not implemented by the worker yet.")
+            project_id = job.project_id
+            input_revision = job.input_revision
+
+        _set_running_job_stage(engine, job_id, "preparing_asr")
+        result = transcribe_project(
+            engine,
+            project_id=project_id,
+            job_id=job_id,
+            input_revision=input_revision,
+            stage_callback=lambda stage: _set_running_job_stage(engine, job_id, stage),
+        )
+        logger.info(
+            "ASR stored for job %s: stage=%s segments=%d device=%s compute_type=%s; "
+            "combined Job remains running until translation is implemented.",
+            job_id,
+            result.stage,
+            result.segment_count,
+            result.device,
+            result.compute_type,
+        )
+    except Exception as error:
+        try:
+            mark_job_failed(engine, job_id, str(error))
+        except Exception as transition_error:
+            logger.warning(
+                "Could not persist failure state for job %s (%s).",
+                job_id,
+                type(transition_error).__name__,
+            )
+        logger.warning(
+            "Job %s failed during ASR: %s",
+            job_id,
+            safe_error_summary(str(error)),
+        )
+
+
 def run_worker(*, poll_interval: float, once: bool = False) -> None:
     """Recover abandoned work, then poll and claim sequentially under one worker lock."""
     engine = create_database_engine()
@@ -187,6 +248,7 @@ def run_worker(*, poll_interval: float, once: bool = False) -> None:
             job_id = claim_next_job(engine)
             if job_id is not None:
                 logger.info("Claimed job %s", job_id)
+                process_claimed_job(engine, job_id)
                 if once:
                     return
             elif once:

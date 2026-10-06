@@ -9,10 +9,10 @@
 
 ## Current Task
 
-- **Phase:** 4 — Jobs and Python worker
-- **Task:** `UI-02`
-- **Next after verified completion:** `ASR-01`.
-- **Scope:** See the `UI-02` task entry below.
+- **Phase:** 6 — Gemini and translation review
+- **Task:** `TRANS-01`
+- **Next after verified completion:** `TRANS-02`.
+- **Scope:** See the `TRANS-01` task entry below.
 
 ## Phase 1 — Documents and environment
 
@@ -44,7 +44,7 @@
 
 ## Phase 5 — Whisper transcript
 
-- [ ] `ASR-01` — Transcribe a short permitted sample with timestamps. Verify text/timestamps and correct handling of no-speech input.
+- [x] `ASR-01` — Transcribe a short permitted sample with timestamps. Evidence: faster-whisper `small` ran through the separate worker against real uploaded speech and no-speech MP4s; timestamped Segments persisted to Supabase through SQLAlchemy and were confirmed from a fresh session. The speech transcript remained a single row after a safe rerun; no-speech persisted zero rows. CUDA inference was attempted but failed because CTranslate2 could not load `cublas64_12.dll`; real CPU `int8` inference succeeded. Combined Jobs remain `running` after ASR because translation is not implemented.
 
 ## Phase 6 — Gemini and translation review
 

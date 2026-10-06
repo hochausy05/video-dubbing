@@ -195,3 +195,12 @@
 - **Verification:** The developer confirmed the end-to-end browser flow against the backend. `npm run build` and `git diff --check` passed during this close-out.
 - **Result/limits:** UI-02 is complete. The worker still has no ASR/translation pipeline, which remains out of scope.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `ASR-01` — Real Whisper transcription and Segment persistence
+
+- **AI assistance:** Implemented a focused faster-whisper service with a reused per-worker model, managed source-path resolution, timestamp/text normalization, safe transcript replacement, and transactional Segment persistence; connected ASR stages to the existing sequential worker.
+- **Developer decision:** Keep the existing combined `transcribe_translate` Job truthful by leaving it `running` after ASR; preserve translated/revised transcript data on rerun conflicts; attempt CUDA then explicitly fall back to CPU.
+- **Affected areas:** ASR service, worker lifecycle, pinned backend dependency, ignored model/cache locations, normalization tests, architecture/environment records, and task audit records.
+- **Verification:** Real uploaded speech and silent MP4s were processed by the separate worker against Supabase. Fresh SQLAlchemy sessions confirmed transcript timestamps/IDs and empty translation fields; rerun did not duplicate Segments; no-speech yielded zero Segments; edited transcript data was preserved after a safe failure. CUDA inference failed due to unavailable `cublas64_12.dll`; real CPU `int8` inference succeeded. Removed only verification records and media. `compileall`, `pip check`, 3 unit tests, `git diff --check`, secret/ignore checks passed.
+- **Result/limits:** ASR-01 is complete. GPU inference is not verified, combined Jobs remain running until translation exists, and Supabase MCP reported public-table RLS disabled; no unrelated Supabase security setting was changed.
+- **Commit/issue:** None recorded by the AI assistant.

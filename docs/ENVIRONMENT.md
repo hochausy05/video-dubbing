@@ -38,11 +38,11 @@ This file records facts verified during `INIT-04` and `ENV-00` plus explicit env
 - Node.js and npm are available for `ENV-02`/`ENV-03` setup.
 - FFmpeg and ffprobe are in `PATH`; the build advertises NVIDIA encoders.
 - Current drive capacity is sufficient to start the MVP.
+- `faster-whisper==1.2.1` is installed in the Python 3.11 backend environment. Real inference with model `small` succeeded on CPU using compute type `int8`.
 
 ## Not yet verified
 
-- `.venv`, project packages, and Whisper model are not yet installed by the recorded environment tasks.
-- faster-whisper/Whisper has not run on the GPU; GPU support must not be claimed before `ASR-01` evidence.
+- CUDA Whisper inference was attempted on the RTX 3060 but failed because `cublas64_12.dll` was unavailable to CTranslate2; the worker logged the failure and completed real CPU `int8` inference. GPU inference remains unverified and is not claimed.
 - Gemini, Edge-TTS, and end-to-end performance remain unverified. The configured MP4 upload limits are documented in `docs/PRD.md`; UPLOAD-02 must verify enforcement through the FastAPI endpoint.
 - Detected NVENC support does not prove every render command will succeed.
 - Supabase connection and DATA-01 persistence verification completed using the ignored local `DATABASE_URL`; future environment or credential changes require a fresh connection check.

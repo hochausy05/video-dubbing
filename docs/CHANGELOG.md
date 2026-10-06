@@ -191,3 +191,11 @@
 - **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Developer xác nhận UI tạo Job thật ở trạng thái `queued`, tải lại trang khôi phục cùng Job từ backend, worker riêng cập nhật UI sang `running`/`claimed`, và khởi động lại worker cập nhật UI sang `interrupted`. Không có phần trăm tiến độ giả. `npm run build` và `git diff --check` thành công.
 - **Còn lại:** Không trong UI-02.
+
+## 2026-10-06 — ASR-01: Chép lời Whisper có dấu thời gian
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Tích hợp faster-whisper `small` vào worker tuần tự; xác thực đường dẫn video do máy chủ quản lý và lưu Segment theo thứ tự trong giao dịch. Chạy lại chỉ thay thế transcript chưa chỉnh sửa; Job tổng hợp vẫn `running` cho tới khi có dịch thuật.
+- **Tệp:** `.gitignore`, `backend/app/services/asr.py`, `backend/app/workers/job_worker.py`, `backend/requirements.txt`, `tests/unit/test_asr.py`, `docs/ARCHITECTURE.md`, `docs/ENVIRONMENT.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Faster-whisper xử lý video lời nói và video im lặng đã tải lên qua FastAPI; SQLAlchemy lưu và session mới xác nhận Segment có ID duy nhất, văn bản nguồn, thứ tự và mốc thời gian hợp lệ, `translated_text` rỗng/null. Chạy lại không nhân đôi dữ liệu; video im lặng cho 0 Segment và stage `no_speech`; transcript có dữ liệu chỉnh sửa bị từ chối ghi đè và Job chuyển `failed` an toàn. CUDA đã được thử nhưng thiếu `cublas64_12.dll`; suy luận thật bằng CPU `int8` thành công. Đã dọn Project, Job, Segment, video và media kiểm thử. `compileall`, `pip check`, 3 unit test, `git diff --check`, kiểm tra secret/ignore và model weights đều đạt.
+- **Còn lại:** GPU chưa được xác minh. Supabase MCP báo RLS đang tắt trên các bảng public hiện có; cấu hình này không đổi trong ASR-01 và cần chính sách truy cập riêng trước khi bật RLS.
