@@ -10,9 +10,9 @@
 ## Current Task
 
 - **Phase:** 6 — Gemini and translation review
-- **Task:** `TRANS-01`
-- **Next after verified completion:** `TRANS-02`.
-- **Scope:** See the `TRANS-01` task entry below.
+- **Task:** `TRANS-02`
+- **Next after verified completion:** `EDIT-01`.
+- **Scope:** See the `TRANS-02` task entry below.
 
 ## Phase 1 — Documents and environment
 
@@ -48,7 +48,7 @@
 
 ## Phase 6 — Gemini and translation review
 
-- [ ] `TRANS-01` — Translate each segment to Vietnamese with Gemini while preserving segment ID and source text. Reject incomplete/invalid provider structure.
+- [x] `TRANS-01` — Translate each segment to Vietnamese with Gemini while preserving segment ID and source text. Evidence: the real FastAPI/worker flow sent four ASR Segments in one structured Gemini request; every Vietnamese result persisted to Supabase, and a pre-translation snapshot matched afterward for Segment IDs, source text, timestamps, and order. FastAPI returned `succeeded`/`translation_ready`; fresh SQLAlchemy and independent Supabase MCP queries confirmed persistence. No-speech completed `succeeded`/`no_speech` with zero Segments and no Gemini call. Nine unit tests reject missing, duplicate, unknown, malformed, and empty results, confirm an invalid later batch leaves all Segment data unchanged, and protect existing translations. JOB-02 failure and interruption transitions were also verified; task verification data was removed.
 - [ ] `TRANS-02` — Add classified translation/quota failures and bounded retry. Mark simulated-provider tests explicitly as mocks.
 - [ ] `EDIT-01` — Show video and source/translated segment table. Verify rows match stable segment IDs.
 - [ ] `EDIT-02` — Edit, persist, and confirm a translation revision. Verify content survives refresh.

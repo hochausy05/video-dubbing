@@ -16,6 +16,7 @@ from app.core.config import get_job_worker_poll_interval_seconds
 from app.core.database import create_database_engine
 from app.models import Job, JobStatus
 from app.services.asr import transcribe_project
+from app.services.translation import translate_project
 
 
 logger = logging.getLogger("autodub.worker")
@@ -142,13 +143,13 @@ def _finish_running_job(
         raise JobTransitionError(f"Job in state {current_status!r} cannot be finished.")
 
 
-def mark_job_succeeded(engine: Engine, job_id: UUID) -> None:
+def mark_job_succeeded(engine: Engine, job_id: UUID, *, stage: str = "completed") -> None:
     """Persist a success transition for completed real work."""
     _finish_running_job(
         engine,
         job_id,
         status_value=JobStatus.SUCCEEDED.value,
-        stage="completed",
+        stage=stage,
         safe_error=None,
     )
 
@@ -177,7 +178,7 @@ def _set_running_job_stage(engine: Engine, job_id: UUID, stage: str) -> None:
 
 
 def process_claimed_job(engine: Engine, job_id: UUID) -> None:
-    """Run the implemented ASR stage without falsely completing translation Jobs."""
+    """Run ASR and translation before marking the combined pipeline successful."""
     try:
         with Session(engine) as session:
             job = session.get(Job, job_id)
@@ -198,15 +199,24 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
             input_revision=input_revision,
             stage_callback=lambda stage: _set_running_job_stage(engine, job_id, stage),
         )
-        logger.info(
-            "ASR stored for job %s: stage=%s segments=%d device=%s compute_type=%s; "
-            "combined Job remains running until translation is implemented.",
-            job_id,
-            result.stage,
-            result.segment_count,
-            result.device,
-            result.compute_type,
-        )
+        if result.segment_count == 0:
+            mark_job_succeeded(engine, job_id, stage="no_speech")
+            logger.info("Job %s completed with no speech detected.", job_id)
+        else:
+            translation = translate_project(
+                engine,
+                project_id=project_id,
+                job_id=job_id,
+                input_revision=input_revision,
+                stage_callback=lambda stage: _set_running_job_stage(engine, job_id, stage),
+            )
+            mark_job_succeeded(engine, job_id, stage="translation_ready")
+            logger.info(
+                "Job %s completed: translated %d Segments in %d Gemini batch(es).",
+                job_id,
+                translation.segment_count,
+                translation.batch_count,
+            )
     except Exception as error:
         try:
             mark_job_failed(engine, job_id, str(error))
@@ -217,7 +227,7 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
                 type(transition_error).__name__,
             )
         logger.warning(
-            "Job %s failed during ASR: %s",
+            "Job %s failed during transcription/translation: %s",
             job_id,
             safe_error_summary(str(error)),
         )

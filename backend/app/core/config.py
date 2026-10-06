@@ -12,6 +12,11 @@ DATABASE_URL_ENV = "DATABASE_URL"
 MAX_UPLOAD_SIZE_BYTES_ENV = "MAX_UPLOAD_SIZE_BYTES"
 MAX_VIDEO_DURATION_SECONDS_ENV = "MAX_VIDEO_DURATION_SECONDS"
 JOB_WORKER_POLL_INTERVAL_SECONDS_ENV = "JOB_WORKER_POLL_INTERVAL_SECONDS"
+GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
+GEMINI_MODEL_ENV = "GEMINI_MODEL"
+TRANSLATION_BATCH_SIZE_ENV = "TRANSLATION_BATCH_SIZE"
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+DEFAULT_TRANSLATION_BATCH_SIZE = 40
 MAX_UPLOAD_SIZE_BYTES = 104_857_600
 MAX_VIDEO_DURATION_SECONDS = 1_800
 
@@ -83,3 +88,31 @@ def get_job_worker_poll_interval_seconds() -> float:
             f"{JOB_WORKER_POLL_INTERVAL_SECONDS_ENV} must be between 0.05 and 60 seconds."
         )
     return value
+
+
+def get_gemini_api_key() -> str:
+    """Return the locally configured Gemini credential without logging or exposing it."""
+    load_local_environment()
+    api_key = os.getenv(GEMINI_API_KEY_ENV)
+    if not api_key or not api_key.strip():
+        raise RuntimeError("GEMINI_API_KEY must be configured in the local environment.")
+    return api_key.strip()
+
+
+def get_gemini_model() -> str:
+    """Return the centrally configured Gemini model identifier."""
+    load_local_environment()
+    model = os.getenv(GEMINI_MODEL_ENV, DEFAULT_GEMINI_MODEL).strip()
+    if not model or len(model) > 100 or any(character.isspace() for character in model):
+        raise RuntimeError("GEMINI_MODEL must be a non-empty model identifier.")
+    return model
+
+
+def get_translation_batch_size() -> int:
+    """Return the bounded number of Segments sent in one Gemini request."""
+    batch_size = _get_positive_integer_setting(
+        TRANSLATION_BATCH_SIZE_ENV, DEFAULT_TRANSLATION_BATCH_SIZE
+    )
+    if batch_size > 100:
+        raise RuntimeError(f"{TRANSLATION_BATCH_SIZE_ENV} must be between 1 and 100.")
+    return batch_size
