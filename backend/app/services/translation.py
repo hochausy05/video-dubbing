@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Callable, Iterable
 from uuid import UUID
 
@@ -40,6 +42,58 @@ class TranslationConflictError(TranslationError):
 
 class TranslationProviderError(TranslationError):
     """Gemini request failed; provider internals are intentionally omitted."""
+
+    def __init__(self, message: str, *, category: str = "permanent") -> None:
+        super().__init__(message)
+        self.category = category
+
+
+class _ProviderErrorKind(str, Enum):
+    QUOTA = "quota"
+    TRANSIENT = "transient"
+    PERMANENT = "permanent"
+
+
+def _provider_error_kind(error: Exception) -> _ProviderErrorKind:
+    """Classify using SDK status fields first, with safe text fallback."""
+    name = type(error).__name__.lower()
+    status = next(
+        (getattr(error, field, None) for field in ("status_code", "code", "http_status")
+         if isinstance(getattr(error, field, None), int)),
+        None,
+    )
+    if status == 429 or "resourceexhausted" in name:
+        return _ProviderErrorKind.QUOTA
+    if status is not None:
+        if status == 429:
+            return _ProviderErrorKind.QUOTA
+        if status in (401, 403) or 400 <= status < 500:
+            return _ProviderErrorKind.PERMANENT
+        if 500 <= status < 600:
+            return _ProviderErrorKind.TRANSIENT
+
+    # SDKs sometimes expose enum/string status codes rather than integers.
+    status_text = " ".join(
+        str(getattr(error, field, "")) for field in ("status", "code")
+    ).lower()
+    message = str(error).lower()
+    indicators = f"{name} {status_text} {message}"
+    if any(term in indicators for term in (
+        "resource_exhausted", "resourceexhausted", "quota", "rate limit",
+        "rate_limit", "daily limit", "request limit", "too many requests",
+    )):
+        return _ProviderErrorKind.QUOTA
+    if any(term in indicators for term in (
+        "unauthorized", "unauthenticated", "invalid api key", "api key not valid",
+        "permission denied", "authentication", "configuration",
+    )):
+        return _ProviderErrorKind.PERMANENT
+    if any(term in indicators for term in (
+        "timeout", "timed out", "connection", "network", "temporarily unavailable",
+        "servererror", "service unavailable", "internal error",
+    )) or name in {"timeouterror", "connectionerror", "connecterror", "readtimeout"}:
+        return _ProviderErrorKind.TRANSIENT
+    return _ProviderErrorKind.PERMANENT
 
 
 _GEMINI_RESPONSE_SCHEMA = {
@@ -160,7 +214,13 @@ def _create_gemini_client() -> Any:
     return genai.Client(api_key=get_gemini_api_key())
 
 
-def _request_batch(client: Any, model: str, batch: tuple[SegmentSnapshot, ...]) -> dict[str, str]:
+def _request_batch(
+    client: Any,
+    model: str,
+    batch: tuple[SegmentSnapshot, ...],
+    *,
+    sleeper: Callable[[float], None] | None = None,
+) -> dict[str, str]:
     source_payload = {
         "segments": [
             {"id": str(segment.id), "source_text": segment.source_text}
@@ -177,19 +237,36 @@ def _request_batch(client: Any, model: str, batch: tuple[SegmentSnapshot, ...]) 
     )
     from google.genai import types
 
-    try:
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=_GEMINI_RESPONSE_SCHEMA,
-            ),
-        )
-        response_text = response.text
-    except Exception:
-        raise TranslationProviderError("Gemini translation request failed.") from None
-    return validate_translation_response(response_text, (segment.id for segment in batch))
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=_GEMINI_RESPONSE_SCHEMA,
+                ),
+            )
+        except Exception as error:
+            kind = _provider_error_kind(error)
+            if kind == _ProviderErrorKind.TRANSIENT and attempt == 0:
+                (sleeper or time.sleep)(0.5)
+                continue
+            safe_message = (
+                "Gemini quota or rate limit was reached."
+                if kind == _ProviderErrorKind.QUOTA
+                else "Gemini translation request failed."
+            )
+            raise TranslationProviderError(safe_message, category=kind.value) from None
+        try:
+            return validate_translation_response(
+                response.text, (segment.id for segment in batch)
+            )
+        except TranslationValidationError:
+            if attempt == 0:
+                continue
+            raise
+    raise TranslationProviderError("Gemini translation request failed.")
 
 
 def _load_segment_snapshot(
@@ -301,6 +378,7 @@ def translate_project(
     client_factory: Callable[[], Any] = _create_gemini_client,
     model: str | None = None,
     batch_size: int | None = None,
+    sleeper: Callable[[float], None] | None = None,
 ) -> TranslationResult:
     """Translate all persisted Segments, then atomically persist the complete mapping."""
     snapshots = _load_segment_snapshot(engine, project_id, job_id, input_revision)
@@ -319,7 +397,9 @@ def translate_project(
     translations: dict[str, str] = {}
     try:
         for batch in batches:
-            translations.update(_request_batch(client, selected_model, batch))
+            translations.update(
+                _request_batch(client, selected_model, batch, sleeper=sleeper)
+            )
     finally:
         close = getattr(client, "close", None)
         if callable(close):

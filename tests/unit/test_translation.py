@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 import uuid
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from app.models import Job, Project, Segment
 from app.models.base import Base
 from app.services.translation import (
     TranslationConflictError,
+    TranslationProviderError,
     TranslationValidationError,
     translate_project,
     validate_translation_response,
@@ -86,17 +88,22 @@ class _FakeResponse:
 
 
 class _FakeModels:
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[object]) -> None:
         self._responses = iter(responses)
         self.request_count = 0
 
     def generate_content(self, **_kwargs: object) -> _FakeResponse:
         self.request_count += 1
-        return _FakeResponse(next(self._responses))
+        result = next(self._responses)
+        if isinstance(result, Exception):
+            raise result
+        return _FakeResponse(result)
 
 
 class _FakeClient:
-    def __init__(self, responses: list[str]) -> None:
+    """Deterministic mock provider used by unit tests; never calls Gemini."""
+
+    def __init__(self, responses: list[object]) -> None:
         self.models = _FakeModels(responses)
         self.closed = False
 
@@ -160,6 +167,7 @@ class TranslationPersistenceTests(unittest.TestCase):
             [
                 response([{"id": str(SEGMENT_ID), "translated_text": "Xin chào."}]),
                 response([]),
+                response([]),
             ]
         )
 
@@ -189,8 +197,83 @@ class TranslationPersistenceTests(unittest.TestCase):
                 [(0, 1), (1, 2)],
             )
             self.assertEqual(job.stage, "transcript_ready")
-        self.assertEqual(fake_client.models.request_count, 2)
+        self.assertEqual(fake_client.models.request_count, 3)
         self.assertTrue(fake_client.closed)
+
+    def test_quota_error_fails_without_retry(self) -> None:
+        error = RuntimeError("quota exceeded; daily limit")
+        error.status_code = 429  # type: ignore[attr-defined]
+        client = _FakeClient([error])
+        with patch("app.services.translation.time.sleep") as sleep:
+            with self.assertRaises(TranslationProviderError) as raised:
+                translate_project(
+                    self.engine, project_id=PROJECT_ID, job_id=JOB_ID,
+                    input_revision=0, stage_callback=lambda _stage: None,
+                    client_factory=lambda: client, model="test-model", batch_size=2,
+                )
+        self.assertEqual(raised.exception.category, "quota")
+        self.assertEqual(client.models.request_count, 1)
+        sleep.assert_not_called()
+
+    def test_transient_error_retries_once_and_succeeds_without_real_sleep(self) -> None:
+        ok = response([
+            {"id": str(SEGMENT_ID), "translated_text": "Xin chào."},
+            {"id": str(SECOND_SEGMENT_ID), "translated_text": "Bạn khỏe không?"},
+        ])
+        client = _FakeClient([TimeoutError("network timeout"), ok])
+        with patch("app.services.translation.time.sleep") as sleep:
+            result = translate_project(
+                self.engine, project_id=PROJECT_ID, job_id=JOB_ID,
+                input_revision=0, stage_callback=lambda _stage: None,
+                client_factory=lambda: client, model="test-model", batch_size=2,
+            )
+        self.assertEqual(result.segment_count, 2)
+        self.assertEqual(client.models.request_count, 2)
+        sleep.assert_called_once_with(0.5)
+
+    def test_repeated_transient_error_stops_after_one_retry(self) -> None:
+        client = _FakeClient([TimeoutError("timeout"), TimeoutError("timeout")])
+        with patch("app.services.translation.time.sleep") as sleep:
+            with self.assertRaises(TranslationProviderError) as raised:
+                translate_project(
+                    self.engine, project_id=PROJECT_ID, job_id=JOB_ID,
+                    input_revision=0, stage_callback=lambda _stage: None,
+                    client_factory=lambda: client, model="test-model", batch_size=2,
+                )
+        self.assertEqual(raised.exception.category, "transient")
+        self.assertEqual(client.models.request_count, 2)
+        sleep.assert_called_once_with(0.5)
+        with Session(self.engine) as session:
+            self.assertEqual(session.get(Segment, SEGMENT_ID).translated_text, None)
+
+    def test_authentication_error_is_not_retried(self) -> None:
+        error = RuntimeError("invalid API key")
+        error.status_code = 401  # type: ignore[attr-defined]
+        client = _FakeClient([error])
+        with patch("app.services.translation.time.sleep") as sleep:
+            with self.assertRaises(TranslationProviderError) as raised:
+                translate_project(
+                    self.engine, project_id=PROJECT_ID, job_id=JOB_ID,
+                    input_revision=0, stage_callback=lambda _stage: None,
+                    client_factory=lambda: client, model="test-model", batch_size=2,
+                )
+        self.assertEqual(raised.exception.category, "permanent")
+        self.assertEqual(client.models.request_count, 1)
+        sleep.assert_not_called()
+
+    def test_malformed_response_retries_once_then_fails_without_source_fallback(self) -> None:
+        client = _FakeClient([response([]), response([])])
+        with self.assertRaises(TranslationValidationError):
+            translate_project(
+                self.engine, project_id=PROJECT_ID, job_id=JOB_ID,
+                input_revision=0, stage_callback=lambda _stage: None,
+                client_factory=lambda: client, model="test-model", batch_size=2,
+            )
+        self.assertEqual(client.models.request_count, 2)
+        with Session(self.engine) as session:
+            segments = session.scalars(select(Segment).order_by(Segment.position)).all()
+            self.assertEqual([s.translated_text for s in segments], [None, None])
+            self.assertEqual([s.source_text for s in segments], ["Hello there.", "How are you?"])
 
     def test_no_segments_do_not_create_a_gemini_client(self) -> None:
         with Session(self.engine) as session, session.begin():

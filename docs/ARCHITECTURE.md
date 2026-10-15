@@ -24,6 +24,8 @@ Frontend calls FastAPI only. FastAPI and the worker access Supabase-hosted Postg
 4. For a non-empty transcript, the worker sends deterministic bounded batches of existing Segment IDs and source text to Gemini using a structured JSON schema. It validates the complete mapping before transactionally updating only `translated_text`; no-speech input skips Gemini.
 5. After all translations persist, the combined Job finishes successfully. A no-speech transcript finishes with the truthful `no_speech` stage.
 
+Gemini requests fail immediately on quota/rate-limit and permanent configuration/client errors. Transient network or provider 5xx failures retry the same request at most once after a 0.5-second bounded delay; malformed or incomplete structured output is also retried once, then rejected. No quota retry, model switch, fallback text, or partial persistence is allowed.
+
 The worker loads and reuses one Whisper model instance per process. It attempts CUDA `float16` inference, logs the reason if CUDA initialization/inference fails, and falls back to CPU `int8`. CPU inference is verified; GPU inference is not claimed unless the full inference succeeds.
 
 ## Pipeline B — Generate speech and render

@@ -10,7 +10,7 @@
 ## Current Task
 
 - **Phase:** 6 — Gemini and translation review
-- **Task:** `TRANS-02`
+- **Task:** `EDIT-01`
 - **Next after verified completion:** `EDIT-01`.
 - **Scope:** See the `TRANS-02` task entry below.
 
@@ -49,7 +49,7 @@
 ## Phase 6 — Gemini and translation review
 
 - [x] `TRANS-01` — Translate each segment to Vietnamese with Gemini while preserving segment ID and source text. Evidence: the real FastAPI/worker flow sent four ASR Segments in one structured Gemini request; every Vietnamese result persisted to Supabase, and a pre-translation snapshot matched afterward for Segment IDs, source text, timestamps, and order. FastAPI returned `succeeded`/`translation_ready`; fresh SQLAlchemy and independent Supabase MCP queries confirmed persistence. No-speech completed `succeeded`/`no_speech` with zero Segments and no Gemini call. Nine unit tests reject missing, duplicate, unknown, malformed, and empty results, confirm an invalid later batch leaves all Segment data unchanged, and protect existing translations. JOB-02 failure and interruption transitions were also verified; task verification data was removed.
-- [ ] `TRANS-02` — Add classified translation/quota failures and bounded retry. Mark simulated-provider tests explicitly as mocks.
+- [x] `TRANS-02` — Add classified translation/quota failures and bounded retry. Mark simulated-provider tests explicitly as mocks. Evidence: deterministic mock-provider tests confirm HTTP 429/quota and authentication/configuration errors fail without retry; transient network errors and malformed structured results retry the same batch at most once; repeated transient and malformed responses fail without changing persisted Segment data or falling back to source text. Backoff is bounded to 0.5 seconds and tests replace it with a mock. `compileall`, `pip check`, all 14 unit tests, `git diff --check`, and secret/runtime/ignore checks passed. No real Gemini request or schema change was used.
 - [ ] `EDIT-01` — Show video and source/translated segment table. Verify rows match stable segment IDs.
 - [ ] `EDIT-02` — Edit, persist, and confirm a translation revision. Verify content survives refresh.
 - [ ] `EDIT-03` — Validate translation before TTS. Flag empty/error segments and invalidate artifacts from older revisions.

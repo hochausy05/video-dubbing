@@ -207,3 +207,11 @@
 - **Tệp:** `.env.example`, `backend/app/core/config.py`, `backend/app/services/translation.py`, `backend/app/workers/job_worker.py`, `backend/requirements.txt`, `tests/unit/test_translation.py`, `docs/ARCHITECTURE.md`, `docs/ENVIRONMENT.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Video lời nói tải lên qua FastAPI được worker riêng xử lý bằng faster-whisper và Gemini thật; bốn Segment dịch trong một lô. FastAPI trả Job `succeeded`/`translation_ready`; SQLAlchemy session mới và Supabase MCP xác nhận bản dịch cùng ID, văn bản nguồn, thứ tự và dấu thời gian được giữ nguyên. Video im lặng hoàn tất `succeeded`/`no_speech`, không có Segment hay lời gọi Gemini. Chín unit test đạt, gồm các phản hồi thiếu/trùng/ID lạ/sai cấu trúc/rỗng, bảo vệ bản dịch hiện có và bảo đảm lô lỗi không ghi một phần. Đã xác minh chuyển lỗi và khôi phục `interrupted`; dọn các Project, Job, Segment và media kiểm thử. `compileall`, `pip check`, `git diff --check`, kiểm tra secret/ignore đạt.
 - **Còn lại:** Không trong TRANS-01; chính sách retry/quota vẫn thuộc TRANS-02.
+
+## 2026-10-15 — TRANS-02: Retry Gemini có giới hạn và xử lý quota
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Phân loại lỗi quota, lỗi tạm thời và lỗi cấu hình; chỉ retry lỗi mạng/5xx hoặc phản hồi cấu trúc không hợp lệ tối đa một lần với cùng lô dữ liệu và thời gian chờ ngắn. Lỗi quota dừng ngay; không đổi model, chia lô do quota hay dùng văn bản nguồn thay bản dịch.
+- **Tệp:** `backend/app/services/translation.py`, `tests/unit/test_translation.py`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 14 unit test đạt, gồm các lỗi quota/429, timeout, xác thực, phản hồi sai/thiếu và bảo toàn Segment khi dịch thất bại. Backoff được mock để kiểm thử không phải chờ thật. `compileall`, `pip check`, `git diff --check`, kiểm tra secret/runtime/ignore đạt; không gửi yêu cầu Gemini thật.
+- **Còn lại:** Không trong TRANS-02.

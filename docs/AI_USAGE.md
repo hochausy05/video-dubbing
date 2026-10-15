@@ -213,3 +213,12 @@
 - **Verification:** Against real Supabase, a FastAPI-uploaded speech video produced four ASR Segments and one real Gemini structured request; all translations persisted, Job reached `succeeded`/`translation_ready`, and a pre-translation snapshot matched after a fresh SQLAlchemy reconnect. Supabase MCP independently confirmed persisted rows. A silent video completed `succeeded`/`no_speech` with zero Segments and no Gemini call. Nine unit tests passed for valid/invalid mappings, preserving existing translations, and no-partial-write behavior. Existing JOB-02 safe failure and interruption recovery were confirmed. Verification Projects/Jobs/Segments/files were removed. `compileall`, `pip check`, `git diff --check`, frontend Supabase search, and secret/ignore checks passed.
 - **Result/limits:** TRANS-01 is complete. No quota retry/backoff or translation editing was added; these remain out of scope. Supabase MCP reported RLS disabled on existing public tables; no policy/schema change was made.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `TRANS-02` — Bounded Gemini retries and quota handling
+
+- **AI assistance:** Added structured-first provider error classification, immediate quota/permanent failure, a single bounded retry for transient requests, and a single same-batch retry for malformed structured output. Added deterministic mock-provider tests and kept translation validation and transactional persistence unchanged.
+- **Developer decision:** Do not make real Gemini calls to simulate quota; do not add schema changes, model switching, or quota fallback/splitting. Preserve existing safe worker failure handling and exact Segment identity/content.
+- **Affected areas:** Translation service, unit tests, architecture retry behavior, task status, and append-only audit logs. No database schema, provider, or frontend changes.
+- **Verification:** All 14 backend unit tests passed; `compileall`, `pip check`, `git diff --check`, secret/runtime-file and ignore checks passed. Retry sleeps were mocked. No real Gemini request was made.
+- **Result/limits:** TRANS-02 is complete. Transient backoff is fixed at 0.5 seconds and attempted once; context-limit splitting is not implemented.
+- **Commit/issue:** None recorded by the AI assistant.
