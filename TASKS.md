@@ -10,9 +10,9 @@
 ## Current Task
 
 - **Phase:** 6 — Gemini and translation review
-- **Task:** `EDIT-03`
-- **Next after verified completion:** `EDIT-03`.
-- **Scope:** See the `EDIT-03` task entry below.
+- **Task:** `TTS-01`
+- **Next after verified completion:** `TTS-02`.
+- **Scope:** See the `TTS-01` task entry below.
 
 ## Phase 1 — Documents and environment
 
@@ -52,7 +52,7 @@
 - [x] `TRANS-02` — Add classified translation/quota failures and bounded retry. Mark simulated-provider tests explicitly as mocks. Evidence: deterministic mock-provider tests confirm HTTP 429/quota and authentication/configuration errors fail without retry; transient network errors and malformed structured results retry the same batch at most once; repeated transient and malformed responses fail without changing persisted Segment data or falling back to source text. Backoff is bounded to 0.5 seconds and tests replace it with a mock. `compileall`, `pip check`, all 14 unit tests, `git diff --check`, and secret/runtime/ignore checks passed. No real Gemini request or schema change was used.
 - [x] `EDIT-01` — Show video and source/translated segment table. Verify rows match stable segment IDs. Evidence: developer manually confirmed the original video plays, Chinese source and Vietnamese translation display, timestamp selection seeks accurately, active Segment highlighting follows playback, timestamps align, and a browser refresh preserves transcript and translation data.
 - [x] `EDIT-02` — Edit, persist, and confirm a translation revision. Verify content survives refresh. Evidence: on a real Project, the user manually confirmed editing/saving Vietnamese translations, persistence after F5, Cancel discarding unsaved edits, rejection of empty/whitespace-only translations, and continued video playback, click-to-seek, timestamp display, and automatic Segment highlighting. Backend API validation and persistence are covered by 22 passing unit tests; frontend production build, compileall, pip check, and diff checks passed. The backend-disconnection/save-failure scenario was not manually tested.
-- [ ] `EDIT-03` — Validate translation before TTS. Flag empty/error segments and invalidate artifacts from older revisions.
+- [x] `EDIT-03` — Validate translation before TTS. Evidence: on the real `demo2` Project, the user verified readiness succeeds with 11 Segments, 0 blocking errors, and 0 warnings; saving a Vietnamese translation invalidates the previous result and revalidation returns updated results; video preview and transcript functionality remain operational. 33 backend unit tests, frontend build, compileall, and pip check passed in the prior automated verification. Error/warning scenarios and issue navigation were covered by automated tests but were not manually checked in the browser.
 
 ## Phase 7 — Edge-TTS and FFmpeg output
 

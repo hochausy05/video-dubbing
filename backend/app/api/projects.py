@@ -16,6 +16,7 @@ from app.schemas import (
     JobCreated,
     JobDetail,
     ProjectListItem,
+    TTSReadiness,
     SegmentRead,
     SegmentTranslationUpdate,
 )
@@ -27,9 +28,33 @@ from app.services.uploads import (
     save_source_upload,
     source_relative_path,
 )
+from app.services.tts_readiness import (
+    ProjectNotFoundError,
+    validate_project_tts_readiness,
+)
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+@router.get("/{project_id}/tts-readiness", response_model=TTSReadiness)
+def get_project_tts_readiness(project_id: uuid.UUID) -> TTSReadiness:
+    """Return read-only validation results for a Project's persisted TTS inputs."""
+    database_engine = create_database_engine()
+    try:
+        session_factory = create_session_factory(database_engine)
+        with session_factory() as session:
+            try:
+                return validate_project_tts_readiness(session, project_id)
+            except ProjectNotFoundError:
+                raise HTTPException(status_code=404, detail="Project not found.") from None
+    except SQLAlchemyError as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to validate Project TTS readiness.",
+        ) from error
+    finally:
+        database_engine.dispose()
 
 
 @router.get("/{project_id}/segments", response_model=list[SegmentRead])

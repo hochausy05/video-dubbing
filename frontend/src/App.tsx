@@ -20,6 +20,22 @@ type Segment = {
   translated_text: string | null;
 };
 
+type ReadinessIssue = {
+  code: string;
+  severity: "error" | "warning";
+  message: string;
+  segment_id: string | null;
+};
+
+type TTSReadiness = {
+  project_id: string;
+  ready: boolean;
+  segment_count: number;
+  blocking_error_count: number;
+  warning_count: number;
+  issues: ReadinessIssue[];
+};
+
 type JobState = {
   id: string;
   project_id: string;
@@ -107,6 +123,9 @@ function App() {
   const [translationDraft, setTranslationDraft] = useState("");
   const [savingSegmentId, setSavingSegmentId] = useState<string | null>(null);
   const [translationSaveErrors, setTranslationSaveErrors] = useState<Record<string, string>>({});
+  const [ttsReadiness, setTtsReadiness] = useState<TTSReadiness | null>(null);
+  const [readinessLoading, setReadinessLoading] = useState(false);
+  const [readinessError, setReadinessError] = useState<string | null>(null);
 
   async function loadProjectJobs(projectList: Project[]) {
     await Promise.all(projectList.map(async (project) => {
@@ -176,6 +195,8 @@ function App() {
     setSegmentsError(null);
     setVideoError(false);
     setCurrentTime(0);
+    setTtsReadiness(null);
+    setReadinessError(null);
     if (updateUrl) {
       window.history.pushState({}, "", `?project=${encodeURIComponent(project.id)}`);
     }
@@ -202,6 +223,29 @@ function App() {
       video.currentTime = segment.start_seconds;
       void video.play().catch(() => undefined);
     }
+  }
+
+  async function checkTtsReadiness() {
+    if (!selectedProject) return;
+    setReadinessLoading(true);
+    setTtsReadiness(null);
+    setReadinessError(null);
+    try {
+      const response = await fetch(`/api/projects/${selectedProject.id}/tts-readiness`);
+      if (!response.ok) throw new Error(await readError(response));
+      setTtsReadiness((await response.json()) as TTSReadiness);
+    } catch (requestError) {
+      setReadinessError(requestError instanceof Error ? requestError.message : "Unable to validate TTS readiness.");
+    } finally {
+      setReadinessLoading(false);
+    }
+  }
+
+  function locateReadinessSegment(segmentId: string) {
+    const row = document.getElementById(`segment-${segmentId}`);
+    row?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const segment = segments.find((item) => item.id === segmentId);
+    if (segment) seekToSegment(segment);
   }
 
   function beginTranslationEdit(segment: Segment) {
@@ -245,6 +289,8 @@ function App() {
       if (!response.ok) throw new Error(await readError(response));
       const updatedSegment = (await response.json()) as Segment;
       setSegments((current) => current.map((item) => item.id === updatedSegment.id ? updatedSegment : item));
+      setTtsReadiness(null);
+      setReadinessError(null);
       setEditingSegmentId(null);
       setTranslationDraft("");
     } catch (saveError) {
@@ -465,13 +511,47 @@ function App() {
             {job?.stage && <p className="job-stage">Stage: {job.stage}</p>}
             {(job?.status === "failed" || job?.status === "interrupted") && job.error && <p className="job-error">{job.error}</p>}
             {job?.status === "queued" || job?.status === "running" ? <p className="state-message">Transcript is being processed. Reopen this Project after processing completes.</p> : null}
+            <section className="readiness-panel" aria-labelledby="readiness-heading" aria-live="polite">
+              <div className="readiness-action">
+                <h3 id="readiness-heading">TTS readiness</h3>
+                <button type="button" onClick={() => void checkTtsReadiness()} disabled={readinessLoading}>
+                  {readinessLoading ? "Checking…" : "Kiểm tra trước khi tạo giọng đọc"}
+                </button>
+              </div>
+              {readinessError && <p className="inline-error" role="alert">{readinessError}</p>}
+              {readinessLoading && <p className="state-message">Checking persisted transcript and translation data…</p>}
+              {ttsReadiness && <>
+                <p className={ttsReadiness.ready ? "readiness-ready" : "readiness-blocked"}>
+                  {ttsReadiness.ready ? "Ready for future TTS" : "Not ready for future TTS"}
+                </p>
+                <p className="readiness-counts">
+                  {ttsReadiness.segment_count} Segments · {ttsReadiness.blocking_error_count} errors · {ttsReadiness.warning_count} warnings
+                </p>
+                {ttsReadiness.blocking_error_count > 0 && <div className="readiness-issues">
+                  <h4>Blocking errors ({ttsReadiness.blocking_error_count})</h4>
+                  <ul>{ttsReadiness.issues.filter((issue) => issue.severity === "error").map((issue, index) => (
+                    <li key={`${issue.code}-${issue.segment_id ?? "project"}-${index}`}>
+                      {issue.segment_id ? <button type="button" className="issue-link" onClick={() => locateReadinessSegment(issue.segment_id!)}>{issue.message}</button> : issue.message}
+                    </li>
+                  ))}</ul>
+                </div>}
+                {ttsReadiness.warning_count > 0 && <div className="readiness-issues warning-list">
+                  <h4>Warnings ({ttsReadiness.warning_count})</h4>
+                  <ul>{ttsReadiness.issues.filter((issue) => issue.severity === "warning").map((issue, index) => (
+                    <li key={`${issue.code}-${issue.segment_id ?? "project"}-${index}`}>
+                      {issue.segment_id ? <button type="button" className="issue-link" onClick={() => locateReadinessSegment(issue.segment_id!)}>{issue.message}</button> : issue.message}
+                    </li>
+                  ))}</ul>
+                </div>}
+              </>}
+            </section>
             {segmentsLoading && <p className="state-message">Loading transcript…</p>}
             {segmentsError && <p className="message error-message" role="alert">{segmentsError}</p>}
             {!segmentsLoading && !segmentsError && segments.length === 0 && (
               <p className="state-message">{transcriptReady ? "No speech was detected in this video." : "No transcript is available yet."}</p>
             )}
             {segments.length > 0 && <ol className="segment-list">
-              {segments.map((segment) => <li key={segment.id} className={activeSegment?.id === segment.id ? "segment-row segment-active" : "segment-row"}>
+              {segments.map((segment) => <li id={`segment-${segment.id}`} key={segment.id} className={activeSegment?.id === segment.id ? "segment-row segment-active" : "segment-row"}>
                 <button type="button" className="segment-seek" onClick={() => seekToSegment(segment)} aria-label={`Seek to ${formatTimestamp(segment.start_seconds)}`}>
                   {formatTimestamp(segment.start_seconds)}
                 </button>

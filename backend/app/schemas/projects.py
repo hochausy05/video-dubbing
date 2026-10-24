@@ -9,6 +9,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
+from app.core.config import MAX_TRANSLATION_TEXT_CHARACTERS
+
 
 class ProjectListItem(BaseModel):
     """The persisted project fields required by the project list UI."""
@@ -43,5 +45,10 @@ class SegmentTranslationUpdate(BaseModel):
 
     translated_text: Annotated[
         str,
-        StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=10_000),
+        StringConstraints(
+            strict=True,
+            strip_whitespace=True,
+            min_length=1,
+            max_length=MAX_TRANSLATION_TEXT_CHARACTERS,
+        ),
     ]

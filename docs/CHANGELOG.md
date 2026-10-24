@@ -247,3 +247,19 @@
 - **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`
 - **Kiểm chứng:** Người dùng xác nhận trên Project thật rằng video vẫn phát, bấm Segment seek đúng timestamp, timestamp hiển thị chính xác và Segment hiện tại được tô sáng tự động. 22 unit test backend, frontend production build, `compileall`, `pip check` và `git diff --check` đã đạt trong lần kiểm chứng trước. Kịch bản ngắt kết nối backend/lưu thất bại không được kiểm thử thủ công.
 - **Còn lại:** Không còn tiêu chí EDIT-02 đang chờ; kịch bản lỗi lưu khi backend mất kết nối chưa được kiểm chứng.
+
+## 2026-10-25 — EDIT-03: Kiểm tra transcript trước TTS
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm API kiểm tra chỉ đọc theo Project và UI hiển thị readiness, lỗi chặn, cảnh báo thời gian cùng liên kết tới Segment liên quan. Kết quả cũ bị xóa sau khi lưu bản dịch; không tạo audio/video hoặc thay đổi timeline nguồn.
+- **Tệp:** `backend/app/core/config.py`, `backend/app/api/projects.py`, `backend/app/schemas/projects.py`, `backend/app/schemas/readiness.py`, `backend/app/schemas/__init__.py`, `backend/app/services/tts_readiness.py`, `frontend/src/App.tsx`, `frontend/src/index.css`, `tests/unit/test_tts_readiness.py`, `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 33 unit test backend đạt, gồm Project/Job/Segment, lỗi bản dịch và timestamp, warning WPS/overlap, thứ tự issue và xác nhận không ghi dữ liệu. `npm run build`, `compileall`, `pip check` đạt. Chưa thực hiện nghiệm thu thủ công trên trình duyệt.
+- **Còn lại:** EDIT-03 chờ xác nhận UI readiness, phân loại lỗi/cảnh báo và điều hướng tới Segment trên trình duyệt thật. Ngưỡng cảnh báo là cửa sổ dưới 250 ms và trên 8 token cách trắng/giây; đây không phải phép đo thời lượng audio. TTS thích ứng và dynamic video stretching chưa được triển khai.
+
+## 2026-10-25 — EDIT-03: Hoàn tất nghiệm thu readiness trên demo2
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đóng EDIT-03 sau khi người dùng xác nhận readiness cho Project `demo2`, cập nhật kết quả sau khi lưu bản dịch và giữ nguyên video/transcript viewer.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`
+- **Kiểm chứng:** Người dùng xác nhận trên trình duyệt thật: `demo2` hiển thị “Ready for future TTS” với 11 Segment, 0 lỗi chặn và 0 cảnh báo; sau khi sửa/lưu bản dịch, kết quả readiness cũ bị vô hiệu hóa và lần kiểm tra tiếp theo hiển thị kết quả mới; video preview và transcript vẫn hoạt động. 33 backend unit test, frontend build, `compileall`, `pip check` là kết quả của lần kiểm chứng tự động trước. Lỗi/cảnh báo và điều hướng Segment không được kiểm thử thủ công trên trình duyệt.
+- **Còn lại:** Không còn tiêu chí EDIT-03 đang chờ; TTS đo thời lượng, điều chỉnh tốc độ và dynamic video stretching chưa thuộc EDIT-03.

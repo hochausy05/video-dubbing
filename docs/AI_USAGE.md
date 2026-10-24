@@ -43,6 +43,15 @@
 - **Result/limits:** Partial; EDIT-02 remains pending manual browser acceptance. Authentication is not implemented anywhere in this single-user app.
 - **Commit/issue:** None recorded by the AI assistant.
 
+## `EDIT-03` — Pre-TTS translation readiness validation
+
+- **AI assistance:** Added a read-only SQLAlchemy validation service/API, structured readiness issues, conservative centralized timing heuristics, and viewer UI for readiness, separated blocking errors/warnings, Segment navigation, and stale-result invalidation after saved edits.
+- **Developer decision:** Preserve EDIT-02's shared 10,000-character limit and translation protection; treat short windows, estimated WPS, and overlaps as warnings; keep original Whisper timestamps unchanged and leave synthesis/output timing to later TTS/Render tasks.
+- **Affected areas:** Backend config, Project API/schemas/service, React viewer/styles, focused readiness tests, task status, architecture and append-only logs. No schema migration or dependency added.
+- **Verification:** 33 backend unit tests passed, including no-write verification; frontend production build, `compileall`, `pip check`, and `git diff --check` passed. Manual browser acceptance remains pending.
+- **Result/limits:** Partial. The readiness result uses 250 ms and 8 whitespace-delimited Vietnamese tokens/second as warning-only heuristics. It does not measure synthesized duration or implement adaptive pacing, time-stretching, or output timeline changes.
+- **Commit/issue:** None recorded by the AI assistant.
+
 ## `INIT-04` — Confirm development environment
 
 - **AI assistance:** Analyzed developer-provided machine results and updated environment-related documentation without installing packages or writing application code.
