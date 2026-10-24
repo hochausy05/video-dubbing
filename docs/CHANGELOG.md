@@ -263,3 +263,19 @@
 - **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`
 - **Kiểm chứng:** Người dùng xác nhận trên trình duyệt thật: `demo2` hiển thị “Ready for future TTS” với 11 Segment, 0 lỗi chặn và 0 cảnh báo; sau khi sửa/lưu bản dịch, kết quả readiness cũ bị vô hiệu hóa và lần kiểm tra tiếp theo hiển thị kết quả mới; video preview và transcript vẫn hoạt động. 33 backend unit test, frontend build, `compileall`, `pip check` là kết quả của lần kiểm chứng tự động trước. Lỗi/cảnh báo và điều hướng Segment không được kiểm thử thủ công trên trình duyệt.
 - **Còn lại:** Không còn tiêu chí EDIT-03 đang chờ; TTS đo thời lượng, điều chỉnh tốc độ và dynamic video stretching chưa thuộc EDIT-03.
+
+## 2026-10-25 — TTS-01: Tạo giọng tiếng Việt theo Segment
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm Job `tts` có kiểm tra lại readiness, worker Edge-TTS theo Segment, tốc độ thích ứng theo WPS, lưu Artifact theo Project/Job/Segment, đo duration bằng FFprobe và API phát audio có kiểm tra provenance. Thêm migration PostgreSQL chỉ bổ sung metadata nullable; không đổi timestamp nguồn hay bản dịch.
+- **Tệp:** `backend/app/services/tts.py`, `backend/app/api/projects.py`, `backend/app/workers/job_worker.py`, `backend/app/models/entities.py`, `backend/app/core/config.py`, `backend/app/schemas/tts.py`, `backend/app/schemas/__init__.py`, `backend/app/services/tts_readiness.py`, `backend/app/api/jobs.py`, `backend/requirements.txt`, `backend/migrations/20261025_add_tts_artifact_metadata.sql`, `.env.example`, `frontend/src/App.tsx`, `frontend/src/index.css`, `tests/unit/test_tts.py`, `tests/unit/test_tts_pipeline.py`, `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/ENVIRONMENT.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Edge-TTS `7.3.1` tạo mẫu tiếng Việt thật bằng `vi-VN-HoaiMyNeural`; FFprobe đo 3.480 ms. Migration additive đã áp dụng và Supabase MCP cùng kết nối SQLAlchemy xác nhận các cột Artifact mới. 44 backend unit test, frontend production build, `compileall`, `pip check` và `git diff --check` đạt. Chưa chạy worker với Project thật hoặc kiểm tra phát audio trên trình duyệt.
+- **Còn lại:** Chờ người dùng kiểm tra readiness, tạo Job TTS trên Project có bản dịch thật, đợi worker tới `succeeded`/`tts_ready`, nghe audio nhiều Segment và xác nhận thời lượng hiển thị sau khi tải lại trang. TTS-01 vẫn chưa hoàn tất. Supabase MCP cũng báo RLS đang tắt trên các bảng public hiện có; cấu hình này không được thay đổi trong task.
+
+## 2026-10-25 — TTS-01: Hoàn tất nghiệm thu giọng tiếng Việt
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đóng TTS-01 sau khi người dùng xác nhận tạo và phát audio Edge-TTS riêng cho từng Segment trên Project `demo2`. TTS-01 chỉ hoàn tất phát sinh giọng nói theo Segment; đồng bộ audio/video, Dynamic Video Time-Stretching và render vẫn thuộc các task sau.
+- **Tệp:** `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Người dùng xác nhận Job đạt `succeeded`/`tts_ready`; readiness có 11 Segment, 0 lỗi và 0 cảnh báo; audio tiếng Việt phát được, không bị cắt, hiển thị tốc độ thích ứng `+20%` và thời lượng đo thực tế; audio/thời lượng còn sau F5; timestamp nguồn và bản dịch được giữ nguyên. 44 backend unit test, frontend production build, `compileall`, `pip check` và `git diff --check` là kết quả tự động trước đó do người dùng cung cấp; không chạy lại trong lần đóng task này.
+- **Còn lại:** Không còn tiêu chí TTS-01 đang chờ. Đồng bộ audio/video, Dynamic Video Time-Stretching và render MP4/SRT chưa thuộc TTS-01.

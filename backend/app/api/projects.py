@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
+from pathlib import PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
@@ -11,7 +13,8 @@ from sqlalchemy import desc, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import create_database_engine, create_session_factory
-from app.models import Job, JobStatus, Project, Segment
+from app.core.config import get_edge_tts_voice
+from app.models import Artifact, Job, JobStatus, Project, Segment
 from app.schemas import (
     JobCreated,
     JobDetail,
@@ -19,6 +22,7 @@ from app.schemas import (
     TTSReadiness,
     SegmentRead,
     SegmentTranslationUpdate,
+    TTSArtifactRead,
 )
 from app.services.uploads import (
     UploadStorageError,
@@ -32,6 +36,7 @@ from app.services.tts_readiness import (
     ProjectNotFoundError,
     validate_project_tts_readiness,
 )
+from app.services.tts import TTS_MEDIA_TYPE, adaptive_rate_percent, translation_fingerprint
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -55,6 +60,157 @@ def get_project_tts_readiness(project_id: uuid.UUID) -> TTSReadiness:
         ) from error
     finally:
         database_engine.dispose()
+
+
+@router.post(
+    "/{project_id}/tts-jobs",
+    response_model=JobCreated,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def enqueue_project_tts_job(project_id: uuid.UUID) -> JobCreated:
+    """Revalidate readiness and persist an explicit user-requested TTS Job."""
+    database_engine = create_database_engine()
+    try:
+        session_factory = create_session_factory(database_engine)
+        with session_factory() as session, session.begin():
+            project = session.get(Project, project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found.")
+            active_job = session.scalar(
+                select(Job.id).where(
+                    Job.project_id == project_id,
+                    Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+                ).limit(1)
+            )
+            if active_job is not None:
+                raise HTTPException(status_code=409, detail="Another Job is already active for this Project.")
+            readiness = validate_project_tts_readiness(session, project_id)
+            if not readiness.ready:
+                raise HTTPException(status_code=409, detail="Project is not ready for Vietnamese voice generation.")
+            job = Job(
+                project_id=project_id,
+                operation_type="tts",
+                input_revision=project.current_revision,
+                status=JobStatus.QUEUED.value,
+                stage="queued",
+            )
+            session.add(job)
+            session.flush()
+            result = JobCreated(id=job.id, project_id=job.project_id, status=job.status)
+        return result
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to enqueue TTS generation.") from error
+    finally:
+        database_engine.dispose()
+
+
+def _artifact_is_current(artifact: Artifact, segment: Segment) -> bool:
+    if not segment.translated_text or not segment.translated_text.strip() or not artifact.voice:
+        return False
+    try:
+        configured_voice = get_edge_tts_voice()
+        rate = adaptive_rate_percent(
+            segment.translated_text, Decimal(segment.end_seconds) - Decimal(segment.start_seconds)
+        )
+    except (ValueError, RuntimeError):
+        return False
+    if not (
+        artifact.provenance_fingerprint == translation_fingerprint(
+        segment.translated_text, configured_voice, rate
+        )
+        and artifact.voice == configured_voice
+        and artifact.rate_percent == rate
+        and artifact.revision == segment.revision
+        and artifact.duration_ms is not None
+        and artifact.duration_ms > 0
+    ):
+        return False
+    expected = f"projects/{artifact.project_id}/jobs/{artifact.job_id}/tts/{segment.id}.mp3"
+    if artifact.storage_reference != expected:
+        return False
+    try:
+        return resolve_storage_path(PurePosixPath(expected)).is_file()
+    except (UploadStorageError, OSError, ValueError):
+        return False
+
+
+@router.get("/{project_id}/tts-audio", response_model=list[TTSArtifactRead])
+def list_project_tts_audio(project_id: uuid.UUID) -> list[TTSArtifactRead]:
+    """List latest persisted per-Segment audio; current reflects provenance validation."""
+    engine = create_database_engine()
+    try:
+        sessions = create_session_factory(engine)
+        with sessions() as session:
+            if session.get(Project, project_id) is None:
+                raise HTTPException(status_code=404, detail="Project not found.")
+            rows = session.execute(
+                select(Artifact, Segment)
+                .join(Segment, Segment.id == Artifact.segment_id)
+                .where(
+                    Artifact.project_id == project_id,
+                    Artifact.media_type == TTS_MEDIA_TYPE,
+                    Artifact.is_current.is_(True),
+                )
+                .order_by(Segment.position, Segment.id)
+            ).all()
+            return [
+                TTSArtifactRead(
+                    id=artifact.id,
+                    project_id=artifact.project_id,
+                    segment_id=segment.id,
+                    duration_ms=artifact.duration_ms,
+                    voice=artifact.voice or "",
+                    rate_percent=artifact.rate_percent or 0,
+                    audio_url=f"/api/projects/{project_id}/segments/{segment.id}/audio",
+                    current=_artifact_is_current(artifact, segment),
+                )
+                for artifact, segment in rows
+                if artifact.duration_ms is not None
+            ]
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to list generated Segment audio.") from error
+    finally:
+        engine.dispose()
+
+
+@router.get("/{project_id}/segments/{segment_id}/audio")
+def get_project_segment_audio(project_id: uuid.UUID, segment_id: uuid.UUID) -> FileResponse:
+    """Serve only current, provenance-matching audio for a known Project Segment."""
+    engine = create_database_engine()
+    try:
+        sessions = create_session_factory(engine)
+        with sessions() as session:
+            segment = session.scalar(select(Segment).where(
+                Segment.id == segment_id, Segment.project_id == project_id
+            ))
+            if segment is None:
+                raise HTTPException(status_code=404, detail="Segment audio not found.")
+            artifact = session.scalar(
+                select(Artifact).where(
+                    Artifact.project_id == project_id,
+                    Artifact.segment_id == segment_id,
+                    Artifact.media_type == TTS_MEDIA_TYPE,
+                    Artifact.is_current.is_(True),
+                ).order_by(desc(Artifact.created_at), desc(Artifact.id)).limit(1)
+            )
+            if artifact is None or not _artifact_is_current(artifact, segment):
+                raise HTTPException(status_code=404, detail="Current Segment audio is not available.")
+            expected = (
+                f"projects/{project_id}/jobs/{artifact.job_id}/tts/{segment_id}.mp3"
+            )
+            if artifact.storage_reference != expected:
+                raise HTTPException(status_code=404, detail="Current Segment audio is not available.")
+            try:
+                audio_path = resolve_storage_path(PurePosixPath(expected))
+            except (UploadStorageError, ValueError, OSError):
+                raise HTTPException(status_code=404, detail="Current Segment audio is not available.") from None
+            if not audio_path.is_file():
+                raise HTTPException(status_code=404, detail="Current Segment audio is not available.")
+        return FileResponse(audio_path, media_type="audio/mpeg", filename=f"segment-{segment_id}.mp3")
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to load Segment audio.") from error
+    finally:
+        engine.dispose()
 
 
 @router.get("/{project_id}/segments", response_model=list[SegmentRead])
@@ -102,7 +258,7 @@ def get_project_video(project_id: uuid.UUID) -> FileResponse:
     try:
         session_factory = create_session_factory(database_engine)
         with session_factory() as session:
-            project = session.get(Project, project_id)
+            project = session.scalar(select(Project).where(Project.id == project_id).with_for_update())
             if project is None:
                 raise HTTPException(status_code=404, detail="Project not found.")
             if not project.source_media_reference:
@@ -149,7 +305,10 @@ def update_project_segment_translation(
 
             latest_job = session.scalar(
                 select(Job)
-                .where(Job.project_id == project_id)
+                .where(
+                    Job.project_id == project_id,
+                    Job.operation_type == "transcribe_translate",
+                )
                 .order_by(desc(Job.created_at), desc(Job.id))
                 .limit(1)
                 .with_for_update()
@@ -216,12 +375,19 @@ def enqueue_project_job(project_id: uuid.UUID) -> JobCreated:
     try:
         session_factory = create_session_factory(database_engine)
         with session_factory() as session:
-            project = session.get(Project, project_id)
+            project = session.scalar(select(Project).where(Project.id == project_id).with_for_update())
             if project is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Project not found.",
                 )
+            active_tts_job = session.scalar(select(Job.id).where(
+                Job.project_id == project_id,
+                Job.operation_type == "tts",
+                Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+            ).limit(1))
+            if active_tts_job is not None:
+                raise HTTPException(status_code=409, detail="TTS generation is already active for this Project.")
             job = Job(
                 project_id=project.id,
                 operation_type="transcribe_translate",

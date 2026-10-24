@@ -64,6 +64,11 @@ def retry_job(job_id: uuid.UUID) -> JobCreated:
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Only failed or interrupted Jobs can be retried.",
                 )
+            if original.operation_type == "tts":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="TTS Job retry is not available yet.",
+                )
 
             retry = Job(
                 project_id=original.project_id,

@@ -142,6 +142,14 @@ class Artifact(TimestampedModel, Base):
             "storage_reference <> ''", name="ck_autodub_artifacts_storage_reference_not_empty"
         ),
         Index("ix_autodub_artifacts_project_revision", "project_id", "revision"),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms > 0",
+            name="ck_autodub_artifacts_duration_positive",
+        ),
+        CheckConstraint(
+            "rate_percent IS NULL OR rate_percent IN (0, 6, 12, 20)",
+            name="ck_autodub_artifacts_rate_range",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -155,6 +163,13 @@ class Artifact(TimestampedModel, Base):
     media_type: Mapped[str] = mapped_column(String(64), nullable=False)
     storage_reference: Mapped[str] = mapped_column(String(1024), nullable=False)
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    segment_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("autodub_segments.id", ondelete="CASCADE")
+    )
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    provenance_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    voice: Mapped[str | None] = mapped_column(String(255))
+    rate_percent: Mapped[int | None] = mapped_column(Integer)
 
     project: Mapped[Project] = relationship(back_populates="artifacts")
     job: Mapped[Job] = relationship(back_populates="artifacts")

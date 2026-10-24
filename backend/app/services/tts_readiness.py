@@ -254,7 +254,12 @@ def _evaluate_segments(
     return [issue for _key, issue in sorted(issues_with_order, key=lambda item: item[0])]
 
 
-def validate_project_tts_readiness(session: Session, project_id: UUID) -> TTSReadiness:
+def validate_project_tts_readiness(
+    session: Session,
+    project_id: UUID,
+    *,
+    ignore_active_job_id: UUID | None = None,
+) -> TTSReadiness:
     """Read persisted project/job/segment data and return deterministic TTS readiness."""
     project = session.get(Project, project_id)
     if project is None:
@@ -266,11 +271,15 @@ def validate_project_tts_readiness(session: Session, project_id: UUID) -> TTSRea
             Job.project_id == project_id,
             Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
         )
+        .where(Job.id != ignore_active_job_id if ignore_active_job_id is not None else True)
         .limit(1)
     )
     latest_job = session.scalar(
         select(Job)
-        .where(Job.project_id == project_id)
+        .where(
+            Job.project_id == project_id,
+            Job.operation_type == "transcribe_translate",
+        )
         .order_by(desc(Job.created_at), desc(Job.id))
         .limit(1)
     )

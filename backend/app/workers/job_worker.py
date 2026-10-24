@@ -17,6 +17,7 @@ from app.core.database import create_database_engine
 from app.models import Job, JobStatus
 from app.services.asr import transcribe_project
 from app.services.translation import translate_project
+from app.services.tts import generate_project_tts
 
 
 logger = logging.getLogger("autodub.worker")
@@ -178,7 +179,7 @@ def _set_running_job_stage(engine: Engine, job_id: UUID, stage: str) -> None:
 
 
 def process_claimed_job(engine: Engine, job_id: UUID) -> None:
-    """Run ASR and translation before marking the combined pipeline successful."""
+    """Dispatch supported pipeline jobs and persist truthful completion state."""
     try:
         with Session(engine) as session:
             job = session.get(Job, job_id)
@@ -186,10 +187,24 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
                 raise JobNotFoundError("Job not found.")
             if job.status != JobStatus.RUNNING.value:
                 raise JobTransitionError("The Job is no longer running.")
-            if job.operation_type != "transcribe_translate":
+            operation_type = job.operation_type
+            if operation_type not in {"transcribe_translate", "tts"}:
                 raise JobTransitionError("This Job type is not implemented by the worker yet.")
             project_id = job.project_id
             input_revision = job.input_revision
+
+        if operation_type == "tts":
+            stage_callback = lambda stage: _set_running_job_stage(engine, job_id, stage)
+            stage_callback("preparing_tts")
+            segment_count = generate_project_tts(
+                engine,
+                project_id=project_id,
+                job_id=job_id,
+                input_revision=input_revision,
+                stage_callback=stage_callback,
+            )
+            logger.info("Job %s completed TTS for %d Segments.", job_id, segment_count)
+            return
 
         _set_running_job_stage(engine, job_id, "preparing_asr")
         result = transcribe_project(

@@ -39,12 +39,24 @@ type TTSReadiness = {
 type JobState = {
   id: string;
   project_id: string;
+  job_type?: string;
   status: JobStatus;
   stage?: string | null;
   error?: string | null;
   created_at?: string;
   started_at?: string | null;
   finished_at?: string | null;
+};
+
+type TTSArtifact = {
+  id: string;
+  project_id: string;
+  segment_id: string;
+  duration_ms: number;
+  voice: string;
+  rate_percent: number;
+  audio_url: string;
+  current: boolean;
 };
 
 type ApiError = {
@@ -126,6 +138,8 @@ function App() {
   const [ttsReadiness, setTtsReadiness] = useState<TTSReadiness | null>(null);
   const [readinessLoading, setReadinessLoading] = useState(false);
   const [readinessError, setReadinessError] = useState<string | null>(null);
+  const [ttsAudioBySegment, setTtsAudioBySegment] = useState<Record<string, TTSArtifact>>({});
+  const [ttsAudioError, setTtsAudioError] = useState<string | null>(null);
 
   async function loadProjectJobs(projectList: Project[]) {
     await Promise.all(projectList.map(async (project) => {
@@ -197,6 +211,8 @@ function App() {
     setCurrentTime(0);
     setTtsReadiness(null);
     setReadinessError(null);
+    setTtsAudioBySegment({});
+    setTtsAudioError(null);
     if (updateUrl) {
       window.history.pushState({}, "", `?project=${encodeURIComponent(project.id)}`);
     }
@@ -208,6 +224,19 @@ function App() {
       setSegmentsError(loadError instanceof Error ? loadError.message : "Unable to load transcript.");
     } finally {
       setSegmentsLoading(false);
+    }
+    await loadProjectTtsAudio(project.id);
+  }
+
+  async function loadProjectTtsAudio(projectId: string) {
+    try {
+      const response = await fetch(`/api/projects/${projectId}/tts-audio`);
+      if (!response.ok) throw new Error(await readError(response));
+      const artifacts = (await response.json()) as TTSArtifact[];
+      setTtsAudioBySegment(Object.fromEntries(artifacts.map((artifact) => [artifact.segment_id, artifact])));
+      setTtsAudioError(null);
+    } catch (loadError) {
+      setTtsAudioError(loadError instanceof Error ? loadError.message : "Unable to load generated audio.");
     }
   }
 
@@ -289,6 +318,7 @@ function App() {
       if (!response.ok) throw new Error(await readError(response));
       const updatedSegment = (await response.json()) as Segment;
       setSegments((current) => current.map((item) => item.id === updatedSegment.id ? updatedSegment : item));
+      if (selectedProject) await loadProjectTtsAudio(selectedProject.id);
       setTtsReadiness(null);
       setReadinessError(null);
       setEditingSegmentId(null);
@@ -338,6 +368,9 @@ function App() {
             delete next[projectId];
             return next;
           });
+          if (persistedJob.job_type === "tts" && persistedJob.status === "succeeded") {
+            void loadProjectTtsAudio(projectId);
+          }
         } catch (pollError) {
           setJobErrorsByProject((current) => ({
             ...current,
@@ -411,6 +444,24 @@ function App() {
       setEnqueueErrorsByProject((current) => ({
         ...current,
         [project.id]: enqueueError instanceof Error ? enqueueError.message : "Unable to start processing.",
+      }));
+    } finally {
+      setEnqueueingProjects((current) => ({ ...current, [project.id]: false }));
+    }
+  }
+
+  async function startTts(project: Project) {
+    setEnqueueingProjects((current) => ({ ...current, [project.id]: true }));
+    setEnqueueErrorsByProject((current) => ({ ...current, [project.id]: "" }));
+    try {
+      const response = await fetch(`/api/projects/${project.id}/tts-jobs`, { method: "POST" });
+      if (!response.ok) throw new Error(await readError(response));
+      const created = (await response.json()) as JobState;
+      setJobsByProject((current) => ({ ...current, [project.id]: { ...created, job_type: "tts" } }));
+    } catch (enqueueError) {
+      setEnqueueErrorsByProject((current) => ({
+        ...current,
+        [project.id]: enqueueError instanceof Error ? enqueueError.message : "Unable to start Vietnamese voice generation.",
       }));
     } finally {
       setEnqueueingProjects((current) => ({ ...current, [project.id]: false }));
@@ -544,6 +595,16 @@ function App() {
                   ))}</ul>
                 </div>}
               </>}
+              {ttsReadiness?.ready && job?.status !== "queued" && job?.status !== "running" && <button
+                type="button"
+                className="tts-start-button"
+                onClick={() => void startTts(selectedProject)}
+                disabled={enqueueingProjects[selectedProject.id]}
+              >
+                {enqueueingProjects[selectedProject.id] ? "Đang xếp hàng…" : "Tạo giọng đọc tiếng Việt"}
+              </button>}
+              {enqueueErrorsByProject[selectedProject.id] && <p className="inline-error" role="alert">{enqueueErrorsByProject[selectedProject.id]}</p>}
+              {ttsAudioError && <p className="inline-error" role="alert">{ttsAudioError}</p>}
             </section>
             {segmentsLoading && <p className="state-message">Loading transcript…</p>}
             {segmentsError && <p className="message error-message" role="alert">{segmentsError}</p>}
@@ -574,8 +635,16 @@ function App() {
                     ) : (
                       <>
                         <p className={segment.translated_text ? "translated-text" : "translation-pending"}>{segment.translated_text || "Vietnamese translation not available yet."}</p>
+                        {ttsAudioBySegment[segment.id] && (ttsAudioBySegment[segment.id].current ? <div className="segment-audio">
+                          <audio controls preload="none" src={ttsAudioBySegment[segment.id].audio_url}>Audio playback is not supported by this browser.</audio>
+                          <span>{(ttsAudioBySegment[segment.id].duration_ms / 1000).toFixed(2)}s generated audio · {ttsAudioBySegment[segment.id].rate_percent > 0 ? `+${ttsAudioBySegment[segment.id].rate_percent}%` : "normal rate"}</span>
+                        </div> : <p className="translation-pending">Saved audio may be outdated after this translation changed; regenerate TTS.</p>)}
                         <button type="button" className="edit-translation" onClick={() => beginTranslationEdit(segment)}
-                          disabled={Boolean(editingSegmentId) || selectedJobStatus !== "succeeded"}>
+                          disabled={Boolean(editingSegmentId) || (
+                            job?.job_type === "tts"
+                              ? job.status === "queued" || job.status === "running"
+                              : selectedJobStatus !== "succeeded"
+                          )}>
                           {segment.translated_text ? "Edit translation" : "Add translation"}
                         </button>
                       </>

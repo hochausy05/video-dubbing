@@ -38,13 +38,13 @@ The worker loads and reuses one Whisper model instance per process. It attempts 
 
 ## Pipeline B — Generate speech and render
 
-1. The user edits and confirms a translation revision.
-2. FastAPI creates a new TTS/render job for that exact revision.
-3. The worker generates and validates per-segment Vietnamese audio with Edge-TTS.
-4. The worker measures timing, creates SRT, and renders MP4 with FFmpeg.
-5. It stores artifacts linked to the project, job, and confirmed revision.
+TTS-01 adds a user-triggered `POST /projects/{project_id}/tts-jobs`. FastAPI locks the Project, re-runs EDIT-03 readiness, rejects blocking errors or another active Job, then returns a queued `tts` Job. The separate sequential worker revalidates readiness while excluding its own claimed Job, synthesizes each current persisted Vietnamese translation using Edge-TTS voice `vi-VN-HoaiMyNeural` by default, and stores MP3s below the Project/Job UUID path. `EDGE_TTS_VOICE` and `EDGE_TTS_CONCURRENCY` configure the Vietnamese voice and a maximum concurrency of five.
 
-Editing translation invalidates artifacts from older revisions. Retry uses a distinct run identity so stale files are not overwritten or reused as current output.
+Adaptive pacing uses the legacy v3.4.1 whitespace-token WPS heuristic (Vietnamese syllables are counted as whitespace tokens): above 4.2 WPS use +20%, above 3.5 use +12%, above 2.8 use +6%, otherwise normal speed. Each Segment request has a 90-second timeout and at most three attempts with short bounded backoff for transient connection/service failures; client/configuration errors are not retried. FFprobe measures every synthesized MP3 and stores positive integer `duration_ms`. Original Whisper timestamps are unchanged.
+
+The worker stages all audio under a job-specific temporary directory. Only after every Segment succeeds and its translation snapshot still matches does one database transaction insert the Artifact set, make prior TTS Artifacts non-current, and mark the Job `succeeded`/`tts_ready`. Artifact metadata associates a Segment and includes duration, voice, rate, and a SHA-256 fingerprint of exact translation text plus synthesis configuration. A changed translation or voice/rate makes old audio stale and unavailable for playback; failed regeneration leaves the last valid Artifact set intact. Audio is served only through the Project/Segment API after ownership, canonical relative path, and provenance checks. Translation readiness is based on the current successful `transcribe_translate` Job, so a later TTS Job does not invalidate EDIT-02 or EDIT-03.
+
+TTS-01 creates Segment-level speech audio only; it does not create a final video or output timeline. The user confirmed real Project worker generation and browser playback on `demo2`, including persistence after refresh. Legacy v3.5.0 Dynamic Video Time-Stretching, cumulative timeline shifting, SRT generation, mixing, audio/video synchronization, and rendering remain future work.
 
 ## State model
 
@@ -66,7 +66,7 @@ For JOB-02, enqueue and retry set both status and stage to `queued`. Claim sets 
 | `Project` | ID, name, source media reference, languages, selected voice, business state, current revision, timestamps |
 | `Job` | ID, project ID, operation type, input revision, state, stage, safe error, start/end timestamps |
 | `Segment` | Stable ID, project ID, order, start/end, source text, translated text, revision, warnings |
-| `Artifact` | ID, project/job ID, revision, media type, controlled internal path |
+| `Artifact` | ID, project/job ID, optional Segment ID, revision, media type, controlled internal path, measured duration, translation/config fingerprint, voice and adaptive rate |
 
 Persistent entities use UUID identifiers and timezone-aware timestamps where appropriate. The database stores metadata and controlled media references only; source, intermediate, and output file contents remain in server-managed storage. DATA-01 field definitions and constraints live in `backend/app/models/entities.py`; clients receive controlled IDs/URLs, never server absolute paths.
 
@@ -79,7 +79,7 @@ Persistent entities use UUID identifiers and timezone-aware timestamps where app
 - Read deterministic pre-TTS validation results through `GET /projects/{project_id}/tts-readiness`; errors block readiness while timing warnings remain informational.
 - Create transcribe/translate jobs, read persisted job lifecycle state, and explicitly retry failed or interrupted Jobs as new records.
 - Read/edit segments and confirm a translation revision.
-- Create TTS/render jobs.
+- Create a readiness-gated TTS Job, list current per-Segment audio and measured durations, and stream audio through `GET /projects/{project_id}/segments/{segment_id}/audio`.
 - Preview/download artifacts for the current project/revision.
 
 Routes and payloads are finalized incrementally before frontend integration; do not prebuild every endpoint.

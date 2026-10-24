@@ -15,8 +15,12 @@ JOB_WORKER_POLL_INTERVAL_SECONDS_ENV = "JOB_WORKER_POLL_INTERVAL_SECONDS"
 GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 GEMINI_MODEL_ENV = "GEMINI_MODEL"
 TRANSLATION_BATCH_SIZE_ENV = "TRANSLATION_BATCH_SIZE"
+EDGE_TTS_VOICE_ENV = "EDGE_TTS_VOICE"
+EDGE_TTS_CONCURRENCY_ENV = "EDGE_TTS_CONCURRENCY"
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+DEFAULT_EDGE_TTS_VOICE = "vi-VN-HoaiMyNeural"
 DEFAULT_TRANSLATION_BATCH_SIZE = 40
+DEFAULT_EDGE_TTS_CONCURRENCY = 5
 MAX_TRANSLATION_TEXT_CHARACTERS = 10_000
 MAX_UPLOAD_SIZE_BYTES = 104_857_600
 MAX_VIDEO_DURATION_SECONDS = 1_800
@@ -117,3 +121,20 @@ def get_translation_batch_size() -> int:
     if batch_size > 100:
         raise RuntimeError(f"{TRANSLATION_BATCH_SIZE_ENV} must be between 1 and 100.")
     return batch_size
+
+
+def get_edge_tts_voice() -> str:
+    """Return the configured Vietnamese Edge-TTS voice."""
+    load_local_environment()
+    voice = os.getenv(EDGE_TTS_VOICE_ENV, DEFAULT_EDGE_TTS_VOICE).strip()
+    if not voice or len(voice) > 255 or not voice.startswith("vi-VN-"):
+        raise RuntimeError("EDGE_TTS_VOICE must be a Vietnamese vi-VN voice identifier.")
+    return voice
+
+
+def get_edge_tts_concurrency() -> int:
+    """Bound concurrent Segment synthesis requests."""
+    value = _get_positive_integer_setting(EDGE_TTS_CONCURRENCY_ENV, DEFAULT_EDGE_TTS_CONCURRENCY)
+    if value > 5:
+        raise RuntimeError("EDGE_TTS_CONCURRENCY must be between 1 and 5.")
+    return value

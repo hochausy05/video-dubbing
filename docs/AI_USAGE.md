@@ -258,3 +258,21 @@
 - **Verification:** All 14 backend unit tests passed; `compileall`, `pip check`, `git diff --check`, secret/runtime-file and ignore checks passed. Retry sleeps were mocked. No real Gemini request was made.
 - **Result/limits:** TRANS-02 is complete. Transient backoff is fixed at 0.5 seconds and attempted once; context-limit splitting is not implemented.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `TTS-01` — Vietnamese Edge-TTS audio per Segment
+
+- **AI assistance:** Implemented readiness-gated TTS Job enqueue, sequential worker dispatch, Edge-TTS service with adaptive WPS pacing, bounded concurrency/retries, FFprobe duration measurement, transactional Artifact publication, safe audio APIs, and focused frontend playback controls.
+- **Developer decision:** Keep TTS as a separate explicit `tts` operation; preserve source timestamps and translation text; preserve prior valid artifacts if regeneration fails; leave final rendering and timeline changes for later tasks. Keep TTS-01 partial until real Project and browser playback acceptance.
+- **Affected areas:** Backend configuration, Artifact metadata and additive Supabase migration, TTS API/service/worker, Project viewer UI, unit tests, environment/architecture records, task and append-only audit logs.
+- **Verification:** 44 backend unit tests passed; frontend production build, Python compileall, pip check, and `git diff --check` passed. A real Edge-TTS sample using `vi-VN-HoaiMyNeural` was measured by FFprobe at 3,480 ms. SQLAlchemy and Supabase MCP confirmed the new Artifact columns.
+- **Result/limits:** Implementation is partial pending real persisted Project worker execution and browser audio playback. Supabase reports RLS disabled on existing public tables; this task did not alter those unrelated policies. Dynamic time stretching, timeline shifting, mixing, and rendering remain future work.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TTS-01` — Manual acceptance close-out
+
+- **AI assistance:** Updated the TTS-01 task status and appended the user's real browser acceptance evidence; clarified that synchronization and rendering remain future work.
+- **Developer decision:** Accept the verified `demo2` Job, readiness, per-Segment playback, adaptive rate, duration persistence, refresh, and source-data preservation results. Keep TTS-02 and rendering tasks pending.
+- **Affected areas:** `TASKS.md`, `docs/ARCHITECTURE.md`, and append-only task audit records.
+- **Verification:** Recorded the manual results supplied by the user. No automated checks were rerun except `git diff --check`.
+- **Result/limits:** TTS-01 is complete. Audio/video synchronization, Dynamic Video Time-Stretching, and rendering are not part of TTS-01.
+- **Commit/issue:** None recorded by the AI assistant.

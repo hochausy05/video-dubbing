@@ -31,6 +31,7 @@ This file records facts verified during `INIT-04` and `ENV-00` plus explicit env
 - Prefer `h264_nvenc` when verified at render time; keep a CPU fallback.
 - Keep the project on drive D and maintain about 10 GB free during development.
 - For `DATA-01`, use Supabase-hosted PostgreSQL through SQLAlchemy and a PostgreSQL driver. Supply its `DATABASE_URL` through uncommitted backend/worker environment configuration only.
+- TTS-01 pins `edge-tts==7.3.1`, defaults to Vietnamese voice `vi-VN-HoaiMyNeural`, and bounds concurrent Segment requests to five. `EDGE_TTS_VOICE` and `EDGE_TTS_CONCURRENCY` are optional backend/worker settings.
 
 ## Ready for upcoming tasks
 
@@ -40,11 +41,12 @@ This file records facts verified during `INIT-04` and `ENV-00` plus explicit env
 - Current drive capacity is sufficient to start the MVP.
 - `faster-whisper==1.2.1` is installed in the Python 3.11 backend environment. Real inference with model `small` succeeded on CPU using compute type `int8`.
 - `google-genai==2.28.0` is installed in the Python 3.11 backend environment. The configured `gemini-3.8-flash` model completed a real structured Vietnamese translation request and persisted all four Segment translations to Supabase; no credential value is recorded here.
+- `edge-tts==7.3.1` generated a real sample with `vi-VN-HoaiMyNeural`; FFprobe measured the sample at 3,480 ms. This verifies the standalone voice/service, not persisted Project processing or browser playback.
 
 ## Not yet verified
 
 - CUDA Whisper inference was attempted on the RTX 3060 but failed because `cublas64_12.dll` was unavailable to CTranslate2; the worker logged the failure and completed real CPU `int8` inference. GPU inference remains unverified and is not claimed.
-- Edge-TTS and end-to-end performance remain unverified. The configured MP4 upload limits are documented in `docs/PRD.md`; UPLOAD-02 must verify enforcement through the FastAPI endpoint.
+- Full Edge-TTS processing through the persisted Project worker and browser audio playback remain pending manual TTS-01 acceptance. No end-to-end performance claim is made. The configured MP4 upload limits are documented in `docs/PRD.md`; UPLOAD-02 must verify enforcement through the FastAPI endpoint.
 - Detected NVENC support does not prove every render command will succeed.
 - Supabase connection and DATA-01 persistence verification completed using the ignored local `DATABASE_URL`; future environment or credential changes require a fresh connection check.
 

@@ -9,10 +9,10 @@
 
 ## Current Task
 
-- **Phase:** 6 — Gemini and translation review
-- **Task:** `TTS-01`
-- **Next after verified completion:** `TTS-02`.
-- **Scope:** See the `TTS-01` task entry below.
+- **Phase:** 7 — Edge-TTS and FFmpeg output
+- **Task:** `TTS-02`
+- **Next after verified completion:** `RENDER-01`.
+- **Scope:** See the `TTS-02` task entry below.
 
 ## Phase 1 — Documents and environment
 
@@ -56,7 +56,7 @@
 
 ## Phase 7 — Edge-TTS and FFmpeg output
 
-- [ ] `TTS-01` — Select a verified Vietnamese voice and generate valid per-segment audio without content loss.
+- [x] `TTS-01` — Select a verified Vietnamese voice and generate valid per-segment audio without content loss. Evidence: on the real `demo2` Project, the user confirmed the TTS Job reached `succeeded`/`tts_ready`, readiness reported 11 Segments with 0 errors and 0 warnings, per-Segment Vietnamese audio played without truncation, adaptive `+20%` rate and measured durations displayed, results persisted after F5, and source timestamps/translations remained unchanged. Segment-level speech generation is complete; synchronization and video time-stretching remain future work.
 - [ ] `TTS-02` — Report TTS failure and support controlled retry; never substitute silent audio as success.
 - [ ] `RENDER-01` — Render dubbed MP4 and SRT with FFmpeg. Watch/listen to output and inspect timing, including overlong speech.
 - [ ] `RESULT-01` — Preview/download artifacts for the correct project and confirmed revision.
