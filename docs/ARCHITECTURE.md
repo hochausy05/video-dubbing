@@ -66,6 +66,7 @@ Persistent entities use UUID identifiers and timezone-aware timestamps where app
 
 - Create/list/read projects.
 - Upload and retrieve controlled source video.
+- Read Project Segments in position order and stream the UUID-derived source video through `GET /projects/{project_id}/segments` and `GET /projects/{project_id}/video`; video responses support HTTP Range requests.
 - Create transcribe/translate jobs, read persisted job lifecycle state, and explicitly retry failed or interrupted Jobs as new records.
 - Read/edit segments and confirm a translation revision.
 - Create TTS/render jobs.

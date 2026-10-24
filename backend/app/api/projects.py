@@ -6,21 +6,94 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import desc, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import create_database_engine, create_session_factory
-from app.models import Job, JobStatus, Project
-from app.schemas import JobCreated, JobDetail, ProjectListItem
+from app.models import Job, JobStatus, Project, Segment
+from app.schemas import JobCreated, JobDetail, ProjectListItem, SegmentRead
 from app.services.uploads import (
     UploadStorageError,
     UploadValidationError,
     remove_source_upload,
+    resolve_storage_path,
     save_source_upload,
+    source_relative_path,
 )
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+@router.get("/{project_id}/segments", response_model=list[SegmentRead])
+def list_project_segments(project_id: uuid.UUID) -> list[SegmentRead]:
+    """Return persisted transcript rows for one existing Project in stable order."""
+    database_engine = create_database_engine()
+    try:
+        session_factory = create_session_factory(database_engine)
+        with session_factory() as session:
+            if session.get(Project, project_id) is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Project not found.",
+                )
+            segments = session.scalars(
+                select(Segment)
+                .where(Segment.project_id == project_id)
+                .order_by(Segment.position, Segment.id)
+            ).all()
+            return [
+                SegmentRead(
+                    id=row.id,
+                    project_id=row.project_id,
+                    position=row.position,
+                    start_seconds=row.start_seconds,
+                    end_seconds=row.end_seconds,
+                    source_text=row.source_text,
+                    translated_text=row.translated_text,
+                )
+                for row in segments
+            ]
+    except SQLAlchemyError as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to load the project transcript.",
+        ) from error
+    finally:
+        database_engine.dispose()
+
+
+@router.get("/{project_id}/video")
+def get_project_video(project_id: uuid.UUID) -> FileResponse:
+    """Stream only the canonical UUID-derived source video for an existing Project."""
+    database_engine = create_database_engine()
+    try:
+        session_factory = create_session_factory(database_engine)
+        with session_factory() as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found.")
+            if not project.source_media_reference:
+                raise HTTPException(status_code=404, detail="Source video not found.")
+        try:
+            canonical_relative_path = source_relative_path(project_id)
+            if project.source_media_reference != canonical_relative_path.as_posix():
+                raise UploadStorageError("Stored source reference is not canonical.")
+            source_path = resolve_storage_path(canonical_relative_path)
+            if not source_path.is_file():
+                raise FileNotFoundError
+        except (UploadStorageError, OSError, ValueError):
+            raise HTTPException(status_code=404, detail="Source video not found.") from None
+        return FileResponse(
+            source_path,
+            media_type="video/mp4",
+            filename="source-video.mp4",
+        )
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to load the source video.") from error
+    finally:
+        database_engine.dispose()
 
 
 @router.post("/{project_id}/jobs", response_model=JobCreated, status_code=status.HTTP_202_ACCEPTED)

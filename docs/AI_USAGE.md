@@ -16,6 +16,15 @@
 - **Result/limits:** Documentation scope completed. Whisper, Gemini, Edge-TTS, FFmpeg, and input limits remained unverified.
 - **Commit/issue:** None recorded by the AI assistant.
 
+## `EDIT-01` — Video preview and bilingual transcript viewer
+
+- **AI assistance:** Added read-only ordered Segment and controlled source-video endpoints, a typed response schema, Range-compatible video delivery, and a responsive React viewer with timestamps, seek, playback highlighting, and backend-driven transcript states.
+- **Developer decision:** Keep transcript read-only, avoid schema changes and preserve all existing Projects and transcript rows.
+- **Affected areas:** Project API/schema, React project viewer, focused API unit tests, architecture route notes, and audit logs.
+- **Verification:** 18 backend unit tests, frontend TypeScript/Vite build, `compileall`, `pip check`, `git diff --check`, and secret/runtime/ignore checks passed. The configured SQLAlchemy connection could not connect to Supabase because its tenant/user was not recognized; no browser test against a real Project was performed.
+- **Result/limits:** Partial; EDIT-01 remains pending until a real persisted Project is opened in the browser and playback, seek, highlighting, and reload are confirmed.
+- **Commit/issue:** None recorded by the AI assistant.
+
 ## `INIT-04` — Confirm development environment
 
 - **AI assistance:** Analyzed developer-provided machine results and updated environment-related documentation without installing packages or writing application code.

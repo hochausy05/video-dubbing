@@ -215,3 +215,11 @@
 - **Tệp:** `backend/app/services/translation.py`, `tests/unit/test_translation.py`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** 14 unit test đạt, gồm các lỗi quota/429, timeout, xác thực, phản hồi sai/thiếu và bảo toàn Segment khi dịch thất bại. Backoff được mock để kiểm thử không phải chờ thật. `compileall`, `pip check`, `git diff --check`, kiểm tra secret/runtime/ignore đạt; không gửi yêu cầu Gemini thật.
 - **Còn lại:** Không trong TRANS-02.
+
+## 2026-10-25 — EDIT-01: Trình xem video và transcript song ngữ
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm API chỉ đọc cho Segment theo thứ tự và video nguồn theo đường dẫn UUID chuẩn; React hiển thị video, transcript song ngữ, mốc thời gian, seek và tô sáng Segment đang phát. Không thay đổi schema hoặc dữ liệu Project.
+- **Tệp:** `backend/app/api/projects.py`, `backend/app/schemas/projects.py`, `backend/app/schemas/__init__.py`, `frontend/src/App.tsx`, `frontend/src/index.css`, `tests/unit/test_project_viewer_api.py`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 18 unit test đạt; gồm sắp thứ tự Segment, Project không tồn tại, chặn đường dẫn video không chuẩn và HTTP Range. `npm run build`, `compileall`, `pip check`, `git diff --check`, kiểm tra secret/runtime/ignore đều đạt. Kiểm tra SQLAlchemy tới Supabase thất bại do cấu hình local trỏ tới tenant/user không hợp lệ; chưa xác minh video/transcript thật trên trình duyệt.
+- **Còn lại:** EDIT-01 vẫn chờ xác minh thủ công với Project thật: mở Project, phát video, seek Segment, kiểm tra tô sáng và tải lại trang để xác nhận dữ liệu được đọc lại từ backend.

@@ -10,6 +10,16 @@ type Project = {
   created_at: string;
 };
 
+type Segment = {
+  id: string;
+  project_id: string;
+  position: number;
+  start_seconds: number;
+  end_seconds: number;
+  source_text: string;
+  translated_text: string | null;
+};
+
 type JobState = {
   id: string;
   project_id: string;
@@ -67,6 +77,14 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function formatTimestamp(value: number): string {
+  const totalMilliseconds = Math.max(0, Math.floor(value * 1000));
+  const minutes = Math.floor(totalMilliseconds / 60_000);
+  const seconds = Math.floor((totalMilliseconds % 60_000) / 1000);
+  const milliseconds = totalMilliseconds % 1000;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
+}
+
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -79,6 +97,12 @@ function App() {
   const [jobErrorsByProject, setJobErrorsByProject] = useState<Record<string, string>>({});
   const [enqueueErrorsByProject, setEnqueueErrorsByProject] = useState<Record<string, string>>({});
   const [enqueueingProjects, setEnqueueingProjects] = useState<Record<string, boolean>>({});
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const [segmentsLoading, setSegmentsLoading] = useState(false);
+  const [segmentsError, setSegmentsError] = useState<string | null>(null);
+  const [videoError, setVideoError] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
 
   async function loadProjectJobs(projectList: Project[]) {
     await Promise.all(projectList.map(async (project) => {
@@ -125,6 +149,11 @@ function App() {
       const projectList = (await response.json()) as Project[];
       setProjects(projectList);
       await loadProjectJobs(projectList);
+      const requestedProjectId = new URLSearchParams(window.location.search).get("project");
+      const requestedProject = projectList.find((project) => project.id === requestedProjectId);
+      if (requestedProject) {
+        await openProject(requestedProject, false);
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load projects.");
     } finally {
@@ -135,6 +164,41 @@ function App() {
   useEffect(() => {
     void loadProjects();
   }, []);
+
+  async function openProject(project: Project, updateUrl = true) {
+    setSelectedProject(project);
+    setSegments([]);
+    setSegmentsLoading(true);
+    setSegmentsError(null);
+    setVideoError(false);
+    setCurrentTime(0);
+    if (updateUrl) {
+      window.history.pushState({}, "", `?project=${encodeURIComponent(project.id)}`);
+    }
+    try {
+      const response = await fetch(`/api/projects/${project.id}/segments`);
+      if (!response.ok) throw new Error(await readError(response));
+      setSegments((await response.json()) as Segment[]);
+    } catch (loadError) {
+      setSegmentsError(loadError instanceof Error ? loadError.message : "Unable to load transcript.");
+    } finally {
+      setSegmentsLoading(false);
+    }
+  }
+
+  function closeProject() {
+    setSelectedProject(null);
+    setSegments([]);
+    window.history.pushState({}, "", window.location.pathname);
+  }
+
+  function seekToSegment(segment: Segment) {
+    const video = document.querySelector<HTMLVideoElement>(".project-video");
+    if (video) {
+      video.currentTime = segment.start_seconds;
+      void video.play().catch(() => undefined);
+    }
+  }
 
   const activeJobsKey = Object.entries(jobsByProject)
     .filter(([, job]) => job.status === "queued" || job.status === "running")
@@ -191,6 +255,29 @@ function App() {
       timers.forEach(window.clearTimeout);
     };
   }, [activeJobsKey]);
+
+  const selectedJobStatus = selectedProject ? jobsByProject[selectedProject.id]?.status : undefined;
+  useEffect(() => {
+    if (!selectedProject || selectedJobStatus !== "succeeded") return;
+    let cancelled = false;
+    void fetch(`/api/projects/${selectedProject.id}/segments`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await readError(response));
+        return (await response.json()) as Segment[];
+      })
+      .then((latestSegments) => {
+        if (!cancelled) {
+          setSegments(latestSegments);
+          setSegmentsError(null);
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setSegmentsError(loadError instanceof Error ? loadError.message : "Unable to load transcript.");
+        }
+      });
+    return () => { cancelled = true; };
+  }, [selectedProject?.id, selectedJobStatus]);
 
   async function startProcessing(project: Project) {
     setEnqueueingProjects((current) => ({ ...current, [project.id]: true }));
@@ -292,6 +379,57 @@ function App() {
     }
   }
 
+  if (selectedProject) {
+    const activeSegment = segments.find((segment) => currentTime >= segment.start_seconds && currentTime < segment.end_seconds);
+    const job = jobsByProject[selectedProject.id];
+    const transcriptReady = Boolean(job?.status === "succeeded" || segments.length > 0);
+    return (
+      <main className="app-shell">
+        <button className="back-button" type="button" onClick={closeProject}>← Projects</button>
+        <header className="page-header viewer-header">
+          <p className="eyebrow">Project viewer</p>
+          <h1>{selectedProject.name}</h1>
+          <p className="intro">Original video and persisted source/translation Segments.</p>
+        </header>
+        <section className="viewer-grid">
+          <div className="video-panel card">
+            {videoError ? <p className="state-message">The source video is missing or could not be played.</p> : (
+              <video className="project-video" controls preload="metadata" src={`/api/projects/${selectedProject.id}/video`}
+                onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                onError={() => setVideoError(true)} />
+            )}
+            <p className="video-caption">Original uploaded video</p>
+          </div>
+          <section className="transcript-panel card" aria-labelledby="transcript-heading">
+            <div className="transcript-heading">
+              <div><p className="section-kicker">Transcript</p><h2 id="transcript-heading">Source &amp; Vietnamese</h2></div>
+              {job && <span className={`status-badge job-status-${job.status}`}>{jobStatusLabels[job.status]}</span>}
+            </div>
+            {job?.stage && <p className="job-stage">Stage: {job.stage}</p>}
+            {(job?.status === "failed" || job?.status === "interrupted") && job.error && <p className="job-error">{job.error}</p>}
+            {job?.status === "queued" || job?.status === "running" ? <p className="state-message">Transcript is being processed. Reopen this Project after processing completes.</p> : null}
+            {segmentsLoading && <p className="state-message">Loading transcript…</p>}
+            {segmentsError && <p className="message error-message" role="alert">{segmentsError}</p>}
+            {!segmentsLoading && !segmentsError && segments.length === 0 && (
+              <p className="state-message">{transcriptReady ? "No speech was detected in this video." : "No transcript is available yet."}</p>
+            )}
+            {segments.length > 0 && <ol className="segment-list">
+              {segments.map((segment) => <li key={segment.id} className={activeSegment?.id === segment.id ? "segment-row segment-active" : "segment-row"}>
+                <button type="button" className="segment-seek" onClick={() => seekToSegment(segment)} aria-label={`Seek to ${formatTimestamp(segment.start_seconds)}`}>
+                  {formatTimestamp(segment.start_seconds)}
+                </button>
+                <div className="segment-languages">
+                  <p>{segment.source_text}</p>
+                  <p className={segment.translated_text ? "translated-text" : "translation-pending"}>{segment.translated_text || "Vietnamese translation not available yet."}</p>
+                </div>
+              </li>)}
+            </ol>}
+          </section>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <header className="page-header">
@@ -360,6 +498,7 @@ function App() {
                 <div className="project-info">
                   <h3>{project.name}</h3>
                   <p>Created {formatDate(project.created_at)}</p>
+                  <button type="button" className="open-project" onClick={() => void openProject(project)}>Open video &amp; transcript</button>
                 </div>
                 <div className="project-meta">
                   <span className={`status-badge status-${project.status}`}>{project.status.replaceAll("_", " ")}</span>

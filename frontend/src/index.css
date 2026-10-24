@@ -31,6 +31,22 @@ button {
   transition: background 160ms ease, transform 160ms ease;
 }
 
+.back-button,
+.open-project,
+.segment-seek {
+  background: transparent;
+  color: #3559d8;
+  padding: 0;
+}
+
+.back-button:hover:not(:disabled),
+.open-project:hover:not(:disabled),
+.segment-seek:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+  transform: none;
+}
+
 button:hover:not(:disabled) {
   background: #2847b6;
   transform: translateY(-1px);
@@ -314,6 +330,105 @@ button:focus-visible {
   color: #23733e;
 }
 
+.open-project {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin-top: 0.65rem;
+}
+
+.viewer-header {
+  margin-top: 1.5rem;
+}
+
+.viewer-grid {
+  align-items: start;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1.1fr) minmax(20rem, 0.9fr);
+}
+
+.video-panel,
+.transcript-panel {
+  min-width: 0;
+  padding: 1rem;
+}
+
+.project-video {
+  background: #101827;
+  border-radius: 0.65rem;
+  display: block;
+  max-height: 70vh;
+  width: 100%;
+}
+
+.video-caption {
+  color: #77859d;
+  font-size: 0.8rem;
+  margin: 0.65rem 0 0;
+}
+
+.transcript-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+
+.segment-list {
+  display: grid;
+  gap: 0.55rem;
+  list-style: none;
+  margin: 0;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 0;
+}
+
+.segment-row {
+  border: 1px solid #e4eaf3;
+  border-radius: 0.65rem;
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: 5.8rem minmax(0, 1fr);
+  padding: 0.7rem;
+}
+
+.segment-active {
+  background: #f0f4ff;
+  border-color: #8097ed;
+}
+
+.segment-seek {
+  align-self: start;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+.segment-languages p {
+  color: #34425d;
+  line-height: 1.5;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.segment-languages p + p {
+  border-top: 1px solid #edf0f5;
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+}
+
+.segment-languages .translated-text {
+  color: #23733e;
+}
+
+.segment-languages .translation-pending {
+  color: #77859d;
+  font-size: 0.84rem;
+  font-style: italic;
+}
+
 @media (max-width: 620px) {
   .app-shell {
     padding-top: 2.5rem;
@@ -342,5 +457,13 @@ button:focus-visible {
 
   .project-job button {
     align-self: start;
+  }
+
+  .viewer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .segment-list {
+    max-height: none;
   }
 }
