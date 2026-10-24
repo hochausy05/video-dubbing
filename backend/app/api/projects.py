@@ -13,7 +13,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import create_database_engine, create_session_factory
-from app.core.config import get_edge_tts_voice
+from app.core.config import get_edge_tts_voice, get_tts_optimization_max_rate_percent
 from app.models import Artifact, Job, JobStatus, Project, Segment
 from app.schemas import (
     JobCreated,
@@ -24,6 +24,7 @@ from app.schemas import (
     SegmentTranslationUpdate,
     TTSArtifactRead,
     TTSTimelinePlan,
+    TTSOptimizationResult,
 )
 from app.services.uploads import (
     UploadStorageError,
@@ -39,6 +40,7 @@ from app.services.tts_readiness import (
 )
 from app.services.tts import TTS_MEDIA_TYPE, adaptive_rate_percent, translation_fingerprint
 from app.services.tts_timeline import build_project_timeline_plan
+from app.services.tts_optimization import enqueue_tts_optimization, read_tts_optimization_result
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -82,6 +84,55 @@ def get_project_tts_timeline_plan(project_id: uuid.UUID) -> TTSTimelinePlan:
 
 
 @router.post(
+    "/{project_id}/tts-optimization-jobs",
+    response_model=JobCreated,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def enqueue_project_tts_optimization(project_id: uuid.UUID) -> JobCreated:
+    """Queue bounded duration optimization when persisted audio has blocking conflicts."""
+    engine = create_database_engine()
+    try:
+        sessions = create_session_factory(engine)
+        with sessions() as session, session.begin():
+            try:
+                return enqueue_tts_optimization(
+                    session,
+                    project_id,
+                    maximum_rate_percent=get_tts_optimization_max_rate_percent(),
+                )
+            except ProjectNotFoundError:
+                raise HTTPException(status_code=404, detail="Project not found.") from None
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from None
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to enqueue TTS optimization.") from error
+    finally:
+        engine.dispose()
+
+
+@router.get(
+    "/{project_id}/tts-optimization-jobs/{job_id}",
+    response_model=TTSOptimizationResult,
+)
+def get_project_tts_optimization_result(project_id: uuid.UUID, job_id: uuid.UUID) -> TTSOptimizationResult:
+    """Return persisted optimization Job state and the current reanalyzed conflicts."""
+    engine = create_database_engine()
+    try:
+        sessions = create_session_factory(engine)
+        with sessions() as session:
+            try:
+                return read_tts_optimization_result(session, project_id, job_id)
+            except ProjectNotFoundError:
+                raise HTTPException(status_code=404, detail="Project not found.") from None
+            except LookupError:
+                raise HTTPException(status_code=404, detail="TTS optimization Job not found.") from None
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to read TTS optimization results.") from error
+    finally:
+        engine.dispose()
+
+
+@router.post(
     "/{project_id}/tts-jobs",
     response_model=JobCreated,
     status_code=status.HTTP_202_ACCEPTED,
@@ -92,7 +143,7 @@ def enqueue_project_tts_job(project_id: uuid.UUID) -> JobCreated:
     try:
         session_factory = create_session_factory(database_engine)
         with session_factory() as session, session.begin():
-            project = session.get(Project, project_id)
+            project = session.scalar(select(Project).where(Project.id == project_id).with_for_update())
             if project is None:
                 raise HTTPException(status_code=404, detail="Project not found.")
             active_job = session.scalar(
@@ -128,9 +179,10 @@ def _artifact_is_current(artifact: Artifact, segment: Segment) -> bool:
         return False
     try:
         configured_voice = get_edge_tts_voice()
-        rate = adaptive_rate_percent(
+        adaptive_rate_percent(
             segment.translated_text, Decimal(segment.end_seconds) - Decimal(segment.start_seconds)
         )
+        rate = artifact.rate_percent
     except (ValueError, RuntimeError):
         return False
     if not (
@@ -138,7 +190,7 @@ def _artifact_is_current(artifact: Artifact, segment: Segment) -> bool:
         segment.translated_text, configured_voice, rate
         )
         and artifact.voice == configured_voice
-        and artifact.rate_percent == rate
+        and rate in {0, 6, 12, 14, 20, 22, 35}
         and artifact.revision == segment.revision
         and artifact.duration_ms is not None
         and artifact.duration_ms > 0
@@ -402,11 +454,10 @@ def enqueue_project_job(project_id: uuid.UUID) -> JobCreated:
                 )
             active_tts_job = session.scalar(select(Job.id).where(
                 Job.project_id == project_id,
-                Job.operation_type == "tts",
                 Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
             ).limit(1))
             if active_tts_job is not None:
-                raise HTTPException(status_code=409, detail="TTS generation is already active for this Project.")
+                raise HTTPException(status_code=409, detail="Another Job is already active for this Project.")
             job = Job(
                 project_id=project.id,
                 operation_type="transcribe_translate",

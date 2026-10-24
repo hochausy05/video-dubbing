@@ -42,11 +42,12 @@ This file records facts verified during `INIT-04` and `ENV-00` plus explicit env
 - `faster-whisper==1.2.1` is installed in the Python 3.11 backend environment. Real inference with model `small` succeeded on CPU using compute type `int8`.
 - `google-genai==2.28.0` is installed in the Python 3.11 backend environment. The configured `gemini-3.8-flash` model completed a real structured Vietnamese translation request and persisted all four Segment translations to Supabase; no credential value is recorded here.
 - `edge-tts==7.3.1` generated a real sample with `vi-VN-HoaiMyNeural`; FFprobe measured the sample at 3,480 ms. This verifies the standalone voice/service, not persisted Project processing or browser playback.
+- TTS-03 optimization is bounded by `TTS_OPTIMIZATION_MAX_RATE_PERCENT` (default 35; allowed 20–35) and `TTS_OPTIMIZATION_MAX_ATTEMPTS` (default 4; allowed 1–4). No new dependency is required.
 
 ## Not yet verified
 
 - CUDA Whisper inference was attempted on the RTX 3060 but failed because `cublas64_12.dll` was unavailable to CTranslate2; the worker logged the failure and completed real CPU `int8` inference. GPU inference remains unverified and is not claimed.
-- TTS-01 persisted worker generation, per-Segment browser playback, measured duration display and refresh persistence were manually accepted on `demo2`. TTS-02 timeline analysis still awaits manual browser acceptance; the verified API example on `demo2` is recorded in `docs/CHANGELOG.md`. No end-to-end performance claim is made. The configured MP4 upload limits are documented in `docs/PRD.md`; UPLOAD-02 must verify enforcement through the FastAPI endpoint.
+- TTS-01 persisted worker generation, per-Segment browser playback, measured duration display and refresh persistence, and TTS-02 timeline analysis were manually accepted on `demo2`. TTS-03's real optimization worker/API/browser flow remains pending manual acceptance. No end-to-end performance claim is made. The configured MP4 upload limits are documented in `docs/PRD.md`; UPLOAD-02 must verify enforcement through the FastAPI endpoint.
 - Detected NVENC support does not prove every render command will succeed.
 - Supabase connection and DATA-01 persistence verification completed using the ignored local `DATABASE_URL`; future environment or credential changes require a fresh connection check.
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import re
+import shutil
 import time
 from uuid import UUID
 
@@ -14,10 +15,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_job_worker_poll_interval_seconds
 from app.core.database import create_database_engine
-from app.models import Job, JobStatus
+from app.models import Artifact, Job, JobStatus
 from app.services.asr import transcribe_project
 from app.services.translation import translate_project
 from app.services.tts import generate_project_tts
+from app.services.tts_optimization import optimize_project_tts
+from app.services.tts import _safe_tts_dir
 
 
 logger = logging.getLogger("autodub.worker")
@@ -99,6 +102,26 @@ def recover_abandoned_jobs(engine: Engine) -> tuple[UUID, ...]:
             .returning(Job.id)
         ).scalars().all()
     return tuple(job_ids)
+
+
+def cleanup_interrupted_tts_optimization_files(engine: Engine, job_ids: tuple[UUID, ...]) -> None:
+    """Remove private staged files for interrupted optimization Jobs with no published rows."""
+    if not job_ids:
+        return
+    with Session(engine) as session:
+        jobs = session.scalars(select(Job).where(
+            Job.id.in_(job_ids),
+            Job.operation_type == "tts_optimize",
+            Job.status == JobStatus.INTERRUPTED.value,
+        )).all()
+        cleanup_paths: list[tuple[UUID, UUID]] = []
+        for job in jobs:
+            published = session.scalar(select(Artifact.id).where(Artifact.job_id == job.id).limit(1))
+            if published is None:
+                cleanup_paths.append((job.project_id, job.id))
+    for project_id, job_id in cleanup_paths:
+        for temporary in (True, False):
+            shutil.rmtree(_safe_tts_dir(project_id, job_id, temporary=temporary), ignore_errors=True)
 
 
 def safe_error_summary(message: str) -> str:
@@ -188,7 +211,7 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
             if job.status != JobStatus.RUNNING.value:
                 raise JobTransitionError("The Job is no longer running.")
             operation_type = job.operation_type
-            if operation_type not in {"transcribe_translate", "tts"}:
+            if operation_type not in {"transcribe_translate", "tts", "tts_optimize"}:
                 raise JobTransitionError("This Job type is not implemented by the worker yet.")
             project_id = job.project_id
             input_revision = job.input_revision
@@ -204,6 +227,19 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
                 stage_callback=stage_callback,
             )
             logger.info("Job %s completed TTS for %d Segments.", job_id, segment_count)
+            return
+
+        if operation_type == "tts_optimize":
+            stage_callback = lambda stage: _set_running_job_stage(engine, job_id, stage)
+            stage_callback("preparing_tts_optimization")
+            optimized_count = optimize_project_tts(
+                engine,
+                project_id=project_id,
+                job_id=job_id,
+                input_revision=input_revision,
+                stage_callback=stage_callback,
+            )
+            logger.info("Job %s completed TTS optimization for %d Segments.", job_id, optimized_count)
             return
 
         _set_running_job_stage(engine, job_id, "preparing_asr")
@@ -242,7 +278,7 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
                 type(transition_error).__name__,
             )
         logger.warning(
-            "Job %s failed during transcription/translation: %s",
+            "Job %s failed during processing: %s",
             job_id,
             safe_error_summary(str(error)),
         )
@@ -267,6 +303,7 @@ def run_worker(*, poll_interval: float, once: bool = False) -> None:
 
         recovered_job_ids = recover_abandoned_jobs(engine)
         if recovered_job_ids:
+            cleanup_interrupted_tts_optimization_files(engine, recovered_job_ids)
             logger.info("Marked %d abandoned job(s) interrupted.", len(recovered_job_ids))
 
         while True:

@@ -74,6 +74,18 @@ def translation_fingerprint(text: str, voice: str, rate_percent: int) -> str:
     return hashlib.sha256(material).hexdigest()
 
 
+OPTIMIZATION_RATE_TIERS = (0, 6, 14, 22, 35)
+
+
+def next_optimization_rate(current_rate_percent: int, maximum_rate_percent: int) -> int | None:
+    """Choose the next bounded legacy-inspired tier above the stored TTS rate."""
+    tiers = (*OPTIMIZATION_RATE_TIERS, maximum_rate_percent)
+    return next(
+        (rate for rate in sorted(set(tiers)) if current_rate_percent < rate <= maximum_rate_percent),
+        None,
+    )
+
+
 def measured_audio_duration_ms(path: Path) -> int:
     """Ask FFprobe for real audio duration and reject missing/unusable output."""
     if not path.is_file() or path.stat().st_size == 0:

@@ -1,4 +1,4 @@
-# AI Usage Log
+﻿# AI Usage Log
 
 ## Initial documentation (`INIT-01`, `INIT-02`)
 
@@ -293,4 +293,22 @@
 - **Affected areas:** `TASKS.md`, `docs/CHANGELOG.md`, and this append-only audit log.
 - **Verification:** Recorded the user's real-browser results. Ran `git diff --check`; no automated tests were rerun.
 - **Result/limits:** TTS-02 is complete. The `demo2` plan still has eight unresolved timing conflicts and is not ready for rendering.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TTS-03` — Duration-aware TTS optimization and timeline conflict resolution
+
+- **AI assistance:** Implemented the typed optimization Job API/result, sequential worker operation, bounded Edge-TTS rate attempts with measured-duration re-planning, guarded atomic Artifact replacement, recovery cleanup for unpublished interrupted work, frontend status/result controls, and focused deterministic tests. Added only the required PostgreSQL Artifact-rate constraint expansion and documented the configuration/workflow.
+- **Developer decision:** Keep optimization bounded to existing planner-blocking Segments and rates up to +35%; never edit translations or source timestamps. A successful optimization Job reports its actual result even if timing conflicts remain; it never implies render readiness. Leave TTS-03 partial until real Project/browser acceptance.
+- **Affected areas:** Backend TTS API/config/model/service/worker/schemas, frontend Project viewer, one Supabase migration, unit tests, task/architecture/environment docs, and append-only audit logs.
+- **Verification:** 70 backend unit tests passed, including 13 TTS optimization tests; `npm run build`, backend `compileall`, `pip check`, and `git diff --check` passed. The additive check constraint was applied to the active Supabase project and independently inspected through Supabase MCP and SQLAlchemy. Secret/ignore check confirmed `.env` and runtime/build directories are ignored. No real Edge-TTS optimization run or browser acceptance was performed.
+- **Result/limits:** TTS-03 is partial pending real worker/API/browser acceptance. No video stretching, mixing, subtitles, or rendering was implemented. Supabase MCP reported RLS disabled on existing public AutoDub tables; this unrelated configuration was left unchanged.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TTS-03` — Manual acceptance close-out
+
+- **AI assistance:** Recorded the user's real `demo2` browser acceptance, marked TTS-03 complete, and advanced the current task pointer to pending RENDER-01. Preserved the existing implementation log and appended close-out records.
+- **Developer decision:** Accept the real Edge-TTS optimization results while keeping `demo2` explicitly non-renderable with six unresolved conflicts. Leave timeline conflict resolution and video rendering pending.
+- **Affected areas:** `TASKS.md`, `docs/CHANGELOG.md`, and this append-only audit log.
+- **Verification:** Recorded the manual results supplied by the user. Ran `git diff --check`; earlier automated results were not rerun.
+- **Result/limits:** TTS-03 is complete. Six conflicts remain (64, 536, 216, 232, 232, and 920 ms excess); no rendering readiness is claimed.
 - **Commit/issue:** None recorded by the AI assistant.

@@ -291,7 +291,13 @@ def _readiness_issues(readiness: TTSReadiness) -> list[TimelinePlanningIssue]:
     ]
 
 
-def build_project_timeline_plan(session: Session, project_id: UUID) -> TTSTimelinePlan:
+def build_project_timeline_plan(
+    session: Session,
+    project_id: UUID,
+    *,
+    ignore_active_job_id: UUID | None = None,
+    duration_overrides_ms: dict[UUID, int] | None = None,
+) -> TTSTimelinePlan:
     """Validate persisted TTS provenance and calculate a plan without DB writes."""
     project = session.get(Project, project_id)
     if project is None:
@@ -304,7 +310,9 @@ def build_project_timeline_plan(session: Session, project_id: UUID) -> TTSTimeli
         video_duration_ms = None
         issues.append(_issue("source_video_unavailable", "Original source video is missing or its duration cannot be verified."))
 
-    readiness = validate_project_tts_readiness(session, project_id)
+    readiness = validate_project_tts_readiness(
+        session, project_id, ignore_active_job_id=ignore_active_job_id
+    )
     issues.extend(_readiness_issues(readiness))
     segments = session.scalars(
         select(Segment).where(
@@ -340,7 +348,6 @@ def build_project_timeline_plan(session: Session, project_id: UUID) -> TTSTimeli
         issues.append(_issue("tts_voice_invalid", "Configured Vietnamese voice cannot be verified."))
 
     timeline_inputs: list[TimelineSegmentInput] = []
-    artifact_job_id: UUID | None = None
     for segment in segments:
         candidates = artifacts_by_segment.get(segment.id, [])
         if len(candidates) != 1:
@@ -356,18 +363,14 @@ def build_project_timeline_plan(session: Session, project_id: UUID) -> TTSTimeli
             continue
         job = session.get(Job, artifact.job_id)
         if (
-            job is None or job.project_id != project_id or job.operation_type != "tts"
-            or job.status != JobStatus.SUCCEEDED.value or job.stage != "tts_ready"
+            job is None or job.project_id != project_id
+            or job.operation_type not in {"tts", "tts_optimize"}
+            or job.status != JobStatus.SUCCEEDED.value
+            or job.stage not in {"tts_ready", "tts_optimization_complete"}
             or job.input_revision != project.current_revision
         ):
             issues.append(_issue("tts_job_incomplete", "TTS Artifact must belong to a completed current-revision TTS Job.", segment.id))
             continue
-        if artifact_job_id is None:
-            artifact_job_id = job.id
-        elif artifact_job_id != job.id:
-            issues.append(_issue("tts_artifact_job_mismatch", "Current TTS Artifacts must belong to one completed TTS Job.", segment.id))
-            continue
-
         expected_reference = f"projects/{project_id}/jobs/{job.id}/tts/{segment.id}.mp3"
         if artifact.storage_reference != expected_reference:
             issues.append(_issue("tts_artifact_path_invalid", "TTS Artifact storage association is invalid.", segment.id))
@@ -388,7 +391,8 @@ def build_project_timeline_plan(session: Session, project_id: UUID) -> TTSTimeli
         try:
             start_ms = _seconds_to_ms(segment.start_seconds)
             end_ms = _seconds_to_ms(segment.end_seconds)
-            rate = adaptive_rate_percent(
+            rate = artifact.rate_percent
+            adaptive_rate_percent(
                 segment.translated_text,
                 Decimal(segment.end_seconds) - Decimal(segment.start_seconds),
             )
@@ -397,7 +401,7 @@ def build_project_timeline_plan(session: Session, project_id: UUID) -> TTSTimeli
             rate = -1
         if (
             start_ms is None or end_ms is None or end_ms <= start_ms
-            or artifact.rate_percent != rate
+            or rate not in {0, 6, 12, 14, 20, 22, 35}
             or artifact.provenance_fingerprint != translation_fingerprint(
                 segment.translated_text, configured_voice, rate
             )
@@ -410,7 +414,7 @@ def build_project_timeline_plan(session: Session, project_id: UUID) -> TTSTimeli
             position=segment.position,
             original_start_ms=start_ms,
             original_end_ms=end_ms,
-            tts_audio_duration_ms=artifact.duration_ms,
+            tts_audio_duration_ms=(duration_overrides_ms or {}).get(segment.id, artifact.duration_ms),
         ))
 
     known_segment_ids = {segment.id for segment in segments}

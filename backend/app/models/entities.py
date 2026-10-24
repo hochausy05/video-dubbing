@@ -147,7 +147,7 @@ class Artifact(TimestampedModel, Base):
             name="ck_autodub_artifacts_duration_positive",
         ),
         CheckConstraint(
-            "rate_percent IS NULL OR rate_percent IN (0, 6, 12, 20)",
+            "rate_percent IS NULL OR rate_percent IN (0, 6, 12, 14, 20, 22, 35)",
             name="ck_autodub_artifacts_rate_range",
         ),
     )

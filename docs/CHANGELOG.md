@@ -1,4 +1,4 @@
-# Nhật ký thay đổi AutoDub
+﻿# Nhật ký thay đổi AutoDub
 
 ## 2026-09-08 — INIT-01: Khởi tạo tài liệu dự án
 
@@ -295,3 +295,19 @@
 - **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Người dùng xác nhận trên Project `demo2`: thời lượng video nguồn 21.339 ms, timeline dự kiến 25.211 ms, tăng 3.872 ms; 9/11 Segment cần kéo giãn và 8 xung đột vượt giới hạn 1,4× được hiển thị. Chọn xung đột điều hướng tới Segment liên quan; tải lại và phân tích lại cho kết quả nhất quán. Video, transcript, bản dịch và audio TTS hiện có vẫn hoạt động. 57 backend unit test, frontend build, `compileall`, `pip check` và `git diff --check` là kết quả tự động trước đó; không chạy lại trong lần đóng task này.
 - **Còn lại:** TTS-02 hoàn tất. Tám xung đột trên `demo2` là kết quả phân tích hợp lệ, nhưng kế hoạch hiện không thể render cho tới khi được giải quyết. Thực thi kéo giãn video, trộn audio, đồng bộ phụ đề và render video vẫn thuộc công việc sau; không đánh dấu Project sẵn sàng render.
+
+## 2026-10-25 — TTS-03: Tối ưu thời lượng TTS theo timeline
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm Job `tts_optimize` chạy tuần tự trong worker riêng, thử lại tổng hợp Edge-TTS với các mức tốc độ hữu hạn tới +35%, đo thời lượng thực tế và phân tích lại các xung đột sau từng vòng. Chỉ Artifact được xác minh mới được thay thế nguyên tử; bản dịch, Segment và timestamp nguồn được giữ nguyên. API trả Job và kết quả tối ưu có thời lượng/rate đo được cùng xung đột còn lại; chưa giải quyết được xung đột thì Project vẫn chưa sẵn sàng render. Thêm migration PostgreSQL chỉ mở rộng allow-list rate cần thiết; không đổi các hàng Artifact hiện có.
+- **Tệp:** `.env.example`, `TASKS.md`, `backend/app/api/jobs.py`, `backend/app/api/projects.py`, `backend/app/core/config.py`, `backend/app/models/entities.py`, `backend/app/schemas/__init__.py`, `backend/app/schemas/tts_optimization.py`, `backend/app/services/tts.py`, `backend/app/services/tts_optimization.py`, `backend/app/services/tts_timeline.py`, `backend/app/workers/job_worker.py`, `frontend/src/App.tsx`, `frontend/src/index.css`, `supabase/migrations/20261024193822_add_tts_optimization_rate_tiers.sql`, `tests/unit/test_tts_optimization.py`, `docs/ARCHITECTURE.md`, `docs/ENVIRONMENT.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 13 kiểm thử tối ưu hóa tập trung và toàn bộ 70 backend unit test đạt; frontend production build, `compileall`, `pip check` và `git diff --check` đạt. Migration áp dụng thành công lên Supabase và định nghĩa constraint được xác minh qua Supabase MCP cùng SQLAlchemy. Kiểm tra trạng thái secret/ignore xác nhận `.env`, virtualenv, runtime media và frontend build được ignore; migration và mã nguồn không chứa bí mật.
+- **Còn lại:** Chưa chạy luồng tối ưu với Edge-TTS thật trên Project thật và chưa nghiệm thu trình duyệt; TTS-03 vẫn một phần. Cần dùng Project có các xung đột TTS hiện hành, enqueue tối ưu hóa, xác nhận worker chạy riêng và Job/result được khôi phục sau refresh; kiểm tra thời lượng/rate mới, Artifact cũ trong khi Job chạy, các xung đột còn lại và thông báo khi không renderable. Không triển khai kéo giãn video, trộn audio, phụ đề hay render. Supabase MCP tiếp tục báo RLS đang tắt trên các bảng public hiện có; không thay đổi cấu hình này trong task.
+
+## 2026-10-25 — TTS-03: Hoàn tất nghiệm thu tối ưu thời lượng TTS
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đóng TTS-03 sau khi người dùng nghiệm thu luồng tối ưu bằng Edge-TTS thật trên Project `demo2`. Bảy Segment có audio được cải thiện; 2/8 xung đột thời lượng được giải quyết. Kế hoạch giảm từ 25.211 ms (tăng 3.872 ms) xuống 25.011 ms (tăng 3.672 ms).
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Người dùng xác nhận đã nghe và chấp nhận audio tiếng Việt tối ưu; sau khi tải lại, kết quả tối ưu, metadata audio và Job vẫn còn. Bản dịch và timestamp nguồn không đổi; video preview, click-to-seek và chỉnh sửa hiện có vẫn hoạt động. Người dùng cung cấp kết quả tự động trước đó: 13 kiểm thử tối ưu hóa, 70 backend unit test, frontend build, `compileall`, `pip check`, `git diff --check` đều đạt; không chạy lại các kiểm tra này trong lần đóng task.
+- **Còn lại:** Sáu xung đột còn lại có phần vượt lần lượt 64, 536, 216, 232, 232 và 920 ms; `demo2` chưa renderable. Giải quyết xung đột timeline và render video vẫn là công việc tương lai, không thuộc nghiệm thu TTS-03.

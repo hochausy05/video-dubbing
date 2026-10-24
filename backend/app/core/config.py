@@ -17,10 +17,14 @@ GEMINI_MODEL_ENV = "GEMINI_MODEL"
 TRANSLATION_BATCH_SIZE_ENV = "TRANSLATION_BATCH_SIZE"
 EDGE_TTS_VOICE_ENV = "EDGE_TTS_VOICE"
 EDGE_TTS_CONCURRENCY_ENV = "EDGE_TTS_CONCURRENCY"
+TTS_OPTIMIZATION_MAX_RATE_ENV = "TTS_OPTIMIZATION_MAX_RATE_PERCENT"
+TTS_OPTIMIZATION_MAX_ATTEMPTS_ENV = "TTS_OPTIMIZATION_MAX_ATTEMPTS"
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 DEFAULT_EDGE_TTS_VOICE = "vi-VN-HoaiMyNeural"
 DEFAULT_TRANSLATION_BATCH_SIZE = 40
 DEFAULT_EDGE_TTS_CONCURRENCY = 5
+DEFAULT_TTS_OPTIMIZATION_MAX_RATE_PERCENT = 35
+DEFAULT_TTS_OPTIMIZATION_MAX_ATTEMPTS = 4
 MAX_TRANSLATION_TEXT_CHARACTERS = 10_000
 MAX_UPLOAD_SIZE_BYTES = 104_857_600
 MAX_VIDEO_DURATION_SECONDS = 1_800
@@ -137,4 +141,24 @@ def get_edge_tts_concurrency() -> int:
     value = _get_positive_integer_setting(EDGE_TTS_CONCURRENCY_ENV, DEFAULT_EDGE_TTS_CONCURRENCY)
     if value > 5:
         raise RuntimeError("EDGE_TTS_CONCURRENCY must be between 1 and 5.")
+    return value
+
+
+def get_tts_optimization_max_rate_percent() -> int:
+    """Return the bounded maximum Edge-TTS rate used by duration optimization."""
+    value = _get_positive_integer_setting(
+        TTS_OPTIMIZATION_MAX_RATE_ENV, DEFAULT_TTS_OPTIMIZATION_MAX_RATE_PERCENT
+    )
+    if value < 20 or value > 35:
+        raise RuntimeError(f"{TTS_OPTIMIZATION_MAX_RATE_ENV} must be between 20 and 35.")
+    return value
+
+
+def get_tts_optimization_max_attempts() -> int:
+    """Bound optimization regeneration rounds for each Segment."""
+    value = _get_positive_integer_setting(
+        TTS_OPTIMIZATION_MAX_ATTEMPTS_ENV, DEFAULT_TTS_OPTIMIZATION_MAX_ATTEMPTS
+    )
+    if value > 4:
+        raise RuntimeError(f"{TTS_OPTIMIZATION_MAX_ATTEMPTS_ENV} must be between 1 and 4.")
     return value

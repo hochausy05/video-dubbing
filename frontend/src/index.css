@@ -522,22 +522,30 @@ button:focus-visible {
 }
 
 .timeline-issues,
-.timeline-operations {
+.timeline-operations,
+.optimization-results {
   margin-top: 0.85rem;
 }
 
 .timeline-issues h4,
-.timeline-operations h4 {
+.timeline-operations h4,
+.optimization-results h4 {
   margin: 0 0 0.35rem;
 }
 
 .timeline-issues ul,
-.timeline-operations ol {
+.timeline-operations ol,
+.optimization-results ul {
   display: grid;
   gap: 0.35rem;
   margin: 0;
   padding-left: 1.2rem;
   font-size: 0.85rem;
+}
+
+.optimization-results p {
+  margin: 0.5rem 0;
+  font-size: 0.88rem;
 }
 
 .readiness-ready {
