@@ -10,9 +10,9 @@
 ## Current Task
 
 - **Phase:** 7 — Edge-TTS and FFmpeg output
-- **Task:** `TTS-02`
-- **Next after verified completion:** `RENDER-01`.
-- **Scope:** See the `TTS-02` task entry below.
+- **Task:** `RENDER-01`
+- **Next after verified completion:** `RESULT-01`.
+- **Scope:** See the `RENDER-01` task entry below.
 
 ## Phase 1 — Documents and environment
 
@@ -57,7 +57,7 @@
 ## Phase 7 — Edge-TTS and FFmpeg output
 
 - [x] `TTS-01` — Select a verified Vietnamese voice and generate valid per-segment audio without content loss. Evidence: on the real `demo2` Project, the user confirmed the TTS Job reached `succeeded`/`tts_ready`, readiness reported 11 Segments with 0 errors and 0 warnings, per-Segment Vietnamese audio played without truncation, adaptive `+20%` rate and measured durations displayed, results persisted after F5, and source timestamps/translations remained unchanged. Segment-level speech generation is complete; synchronization and video time-stretching remain future work.
-- [ ] `TTS-02` — Report TTS failure and support controlled retry; never substitute silent audio as success.
+- [x] `TTS-02` — Analyze measured TTS durations and plan a deterministic output timeline with dynamic video stretch operations capped at 1.4×. Evidence: on the real `demo2` Project, the user confirmed the UI reports 21,339 ms source duration, 25,211 ms planned duration, 3,872 ms added duration, and 9 of 11 Segments requiring stretch; it displays 8 blocking timing conflicts and their Segment navigation, with consistent results after refresh. These are valid analysis findings; the plan is not renderable until conflicts are resolved. Source timestamps remain unchanged. Executing dynamic stretch, mixing, subtitle synchronization, and final rendering remain future work.
 - [ ] `RENDER-01` — Render dubbed MP4 and SRT with FFmpeg. Watch/listen to output and inspect timing, including overlong speech.
 - [ ] `RESULT-01` — Preview/download artifacts for the correct project and confirmed revision.
 - [ ] `FLOW-01` — Run the complete flow with permitted media and real integration evidence; mocks alone are insufficient.

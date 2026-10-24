@@ -279,3 +279,19 @@
 - **Tệp:** `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Người dùng xác nhận Job đạt `succeeded`/`tts_ready`; readiness có 11 Segment, 0 lỗi và 0 cảnh báo; audio tiếng Việt phát được, không bị cắt, hiển thị tốc độ thích ứng `+20%` và thời lượng đo thực tế; audio/thời lượng còn sau F5; timestamp nguồn và bản dịch được giữ nguyên. 44 backend unit test, frontend production build, `compileall`, `pip check` và `git diff --check` là kết quả tự động trước đó do người dùng cung cấp; không chạy lại trong lần đóng task này.
 - **Còn lại:** Không còn tiêu chí TTS-01 đang chờ. Đồng bộ audio/video, Dynamic Video Time-Stretching và render MP4/SRT chưa thuộc TTS-01.
+
+## 2026-10-25 — TTS-02: Phân tích thời lượng và lập kế hoạch timeline
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm API chỉ đọc để kiểm tra Artifact TTS hiện hành và lập timeline đầu ra theo duration đo được, khoảng lặng nguồn, các lần kéo giãn video tối đa 1,4×, dịch chuyển tích lũy và xung đột cần xử lý. Viewer hiển thị kế hoạch và liên kết tới Segment liên quan; không thay đổi timestamp hoặc tạo video.
+- **Tệp:** `backend/app/api/projects.py`, `backend/app/schemas/timeline.py`, `backend/app/schemas/__init__.py`, `backend/app/services/tts_timeline.py`, `frontend/src/App.tsx`, `frontend/src/index.css`, `tests/unit/test_tts_timeline.py`, `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/ENVIRONMENT.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 57 backend unit test, frontend production build, `compileall`, `pip check` và `git diff --check` đạt. Gọi endpoint thực với Project `demo2` và dữ liệu Supabase hiện có trả 11 Segment, video nguồn 21.339 ms, timeline dự kiến 25.211 ms, tăng 3.872 ms với 9 thao tác kéo giãn; có 8 lỗi chặn do giới hạn 1,4× nên kế hoạch chưa thể render. API chỉ đọc, không ghi dữ liệu.
+- **Còn lại:** Chưa nghiệm thu thủ công trên trình duyệt. Cần mở Project `demo2`, chạy phân tích timeline sau khi TTS hoàn tất, kiểm tra thời lượng nguồn/kế hoạch, thao tác và lỗi chặn cùng điều hướng Segment; tải lại trang và chạy phân tích lại. TTS-02 chưa hoàn tất. Chưa triển khai FFmpeg/render, kéo giãn audio, trộn audio hoặc tạo SRT.
+
+## 2026-10-25 — TTS-02: Hoàn tất nghiệm thu timeline trên demo2
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đóng TTS-02 sau khi người dùng xác nhận phân tích timeline, hiển thị thao tác kéo giãn và điều hướng tới Segment có xung đột trên trình duyệt thật.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Người dùng xác nhận trên Project `demo2`: thời lượng video nguồn 21.339 ms, timeline dự kiến 25.211 ms, tăng 3.872 ms; 9/11 Segment cần kéo giãn và 8 xung đột vượt giới hạn 1,4× được hiển thị. Chọn xung đột điều hướng tới Segment liên quan; tải lại và phân tích lại cho kết quả nhất quán. Video, transcript, bản dịch và audio TTS hiện có vẫn hoạt động. 57 backend unit test, frontend build, `compileall`, `pip check` và `git diff --check` là kết quả tự động trước đó; không chạy lại trong lần đóng task này.
+- **Còn lại:** TTS-02 hoàn tất. Tám xung đột trên `demo2` là kết quả phân tích hợp lệ, nhưng kế hoạch hiện không thể render cho tới khi được giải quyết. Thực thi kéo giãn video, trộn audio, đồng bộ phụ đề và render video vẫn thuộc công việc sau; không đánh dấu Project sẵn sàng render.

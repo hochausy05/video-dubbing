@@ -452,6 +452,94 @@ button:focus-visible {
   font-size: 0.82rem;
 }
 
+.timeline-panel {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #dce5e2;
+  border-radius: 0.75rem;
+  background: #fbfdfc;
+}
+
+.timeline-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.timeline-action h3 {
+  margin: 0.2rem 0 0;
+}
+
+.timeline-action button {
+  border: 1px solid #cbd8d4;
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.8rem;
+  background: #fff;
+  color: #244b41;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.timeline-action button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.timeline-clear,
+.timeline-blocked {
+  margin: 0.8rem 0 0;
+  font-weight: 750;
+}
+
+.timeline-clear {
+  color: #23733e;
+}
+
+.timeline-blocked {
+  color: #a52a2a;
+}
+
+.timeline-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0.8rem 0;
+}
+
+.timeline-summary div {
+  min-width: 0;
+}
+
+.timeline-summary dt {
+  color: #66748c;
+  font-size: 0.78rem;
+}
+
+.timeline-summary dd {
+  margin: 0.15rem 0 0;
+  font-weight: 700;
+}
+
+.timeline-issues,
+.timeline-operations {
+  margin-top: 0.85rem;
+}
+
+.timeline-issues h4,
+.timeline-operations h4 {
+  margin: 0 0 0.35rem;
+}
+
+.timeline-issues ul,
+.timeline-operations ol {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.85rem;
+}
+
 .readiness-ready {
   color: #23733e;
   font-weight: 800;

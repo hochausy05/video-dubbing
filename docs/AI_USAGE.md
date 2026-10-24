@@ -276,3 +276,21 @@
 - **Verification:** Recorded the manual results supplied by the user. No automated checks were rerun except `git diff --check`.
 - **Result/limits:** TTS-01 is complete. Audio/video synchronization, Dynamic Video Time-Stretching, and rendering are not part of TTS-01.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `TTS-02` — Duration analysis and dynamic timeline planning
+
+- **AI assistance:** Implemented a read-only timeline planning service and typed API, current TTS Artifact provenance checks, a Project viewer analysis panel, and deterministic planner/API tests. Updated the TTS-02 task scope and relevant architecture/environment records.
+- **Developer decision:** Keep the plan read-only, cap source-video stretch at 1.4×, preserve all source timestamps, and leave task status partial until manual browser acceptance. Do not implement rendering, audio time-stretching, mixing, or subtitles.
+- **Affected areas:** `backend/app/api/projects.py`, timeline schema/service, `frontend/src/App.tsx`, `frontend/src/index.css`, tests, `TASKS.md`, architecture/environment documentation, and append-only task logs.
+- **Verification:** 57 backend unit tests, frontend production build, `compileall`, `pip check`, and `git diff --check` passed. The real `demo2` endpoint call through FastAPI/SQLAlchemy returned a read-only plan for 11 persisted Segments and TTS Artifacts: 21,339 ms original, 25,211 ms planned, 3,872 ms added, 9 stretch operations, and 8 blocking cap conflicts. Browser acceptance remains pending.
+- **Result/limits:** TTS-02 remains partial pending user browser verification. No schema or dependency changes; no video or audio was rendered.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TTS-02` — Manual acceptance close-out
+
+- **AI assistance:** Updated the task status and appended the user's manual browser acceptance evidence while preserving the earlier implementation log.
+- **Developer decision:** Treat the eight 1.4× cap conflicts as valid analysis output and complete TTS-02; keep `demo2` non-renderable until conflicts are resolved. Leave video stretching execution, mixing, subtitle synchronization, and rendering for future tasks.
+- **Affected areas:** `TASKS.md`, `docs/CHANGELOG.md`, and this append-only audit log.
+- **Verification:** Recorded the user's real-browser results. Ran `git diff --check`; no automated tests were rerun.
+- **Result/limits:** TTS-02 is complete. The `demo2` plan still has eight unresolved timing conflicts and is not ready for rendering.
+- **Commit/issue:** None recorded by the AI assistant.

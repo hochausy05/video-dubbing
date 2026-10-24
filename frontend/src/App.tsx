@@ -59,6 +59,51 @@ type TTSArtifact = {
   current: boolean;
 };
 
+type TimelineIssue = {
+  code: string;
+  severity: "blocking" | "warning";
+  message: string;
+  segment_ids: string[];
+};
+
+type PlannedSegmentTiming = {
+  segment_id: string;
+  position: number;
+  original_start_ms: number;
+  original_end_ms: number;
+  tts_audio_duration_ms: number;
+  output_audio_start_ms: number;
+  output_audio_end_ms: number;
+  cumulative_shift_ms: number;
+  stretch_factor: number | null;
+  added_duration_ms: number;
+  unresolved_overlap_ms: number;
+};
+
+type TimelineStretchOperation = {
+  operation_order: number;
+  segment_id: string;
+  source_start_ms: number;
+  source_end_ms: number;
+  stretch_factor: number;
+  expected_output_duration_ms: number;
+  added_duration_ms: number;
+};
+
+type TTSTimelinePlan = {
+  project_id: string;
+  original_video_duration_ms: number | null;
+  planned_output_video_duration_ms: number | null;
+  segment_count: number;
+  stretch_segment_count: number;
+  total_added_duration_ms: number;
+  renderable: boolean;
+  blocking_issue_count: number;
+  issues: TimelineIssue[];
+  segments: PlannedSegmentTiming[];
+  stretch_operations: TimelineStretchOperation[];
+};
+
 type ApiError = {
   detail?: string;
 };
@@ -140,6 +185,9 @@ function App() {
   const [readinessError, setReadinessError] = useState<string | null>(null);
   const [ttsAudioBySegment, setTtsAudioBySegment] = useState<Record<string, TTSArtifact>>({});
   const [ttsAudioError, setTtsAudioError] = useState<string | null>(null);
+  const [timelinePlan, setTimelinePlan] = useState<TTSTimelinePlan | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
 
   async function loadProjectJobs(projectList: Project[]) {
     await Promise.all(projectList.map(async (project) => {
@@ -213,6 +261,8 @@ function App() {
     setReadinessError(null);
     setTtsAudioBySegment({});
     setTtsAudioError(null);
+    setTimelinePlan(null);
+    setTimelineError(null);
     if (updateUrl) {
       window.history.pushState({}, "", `?project=${encodeURIComponent(project.id)}`);
     }
@@ -270,6 +320,22 @@ function App() {
     }
   }
 
+  async function analyzeTtsTimeline() {
+    if (!selectedProject) return;
+    setTimelineLoading(true);
+    setTimelineError(null);
+    setTimelinePlan(null);
+    try {
+      const response = await fetch(`/api/projects/${selectedProject.id}/tts-timeline-plan`);
+      if (!response.ok) throw new Error(await readError(response));
+      setTimelinePlan((await response.json()) as TTSTimelinePlan);
+    } catch (requestError) {
+      setTimelineError(requestError instanceof Error ? requestError.message : "Unable to analyze the TTS timeline.");
+    } finally {
+      setTimelineLoading(false);
+    }
+  }
+
   function locateReadinessSegment(segmentId: string) {
     const row = document.getElementById(`segment-${segmentId}`);
     row?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -319,6 +385,8 @@ function App() {
       const updatedSegment = (await response.json()) as Segment;
       setSegments((current) => current.map((item) => item.id === updatedSegment.id ? updatedSegment : item));
       if (selectedProject) await loadProjectTtsAudio(selectedProject.id);
+      setTimelinePlan(null);
+      setTimelineError(null);
       setTtsReadiness(null);
       setReadinessError(null);
       setEditingSegmentId(null);
@@ -369,6 +437,7 @@ function App() {
             return next;
           });
           if (persistedJob.job_type === "tts" && persistedJob.status === "succeeded") {
+            setTimelinePlan(null);
             void loadProjectTtsAudio(projectId);
           }
         } catch (pollError) {
@@ -451,6 +520,8 @@ function App() {
   }
 
   async function startTts(project: Project) {
+    setTimelinePlan(null);
+    setTimelineError(null);
     setEnqueueingProjects((current) => ({ ...current, [project.id]: true }));
     setEnqueueErrorsByProject((current) => ({ ...current, [project.id]: "" }));
     try {
@@ -606,6 +677,49 @@ function App() {
               {enqueueErrorsByProject[selectedProject.id] && <p className="inline-error" role="alert">{enqueueErrorsByProject[selectedProject.id]}</p>}
               {ttsAudioError && <p className="inline-error" role="alert">{ttsAudioError}</p>}
             </section>
+            {job?.job_type === "tts" && job.status === "succeeded" && job.stage === "tts_ready" && <section className="timeline-panel" aria-labelledby="timeline-heading" aria-live="polite">
+              <div className="timeline-action">
+                <div><p className="section-kicker">Output planning</p><h3 id="timeline-heading">TTS timeline analysis</h3></div>
+                <button type="button" onClick={() => void analyzeTtsTimeline()} disabled={timelineLoading}>
+                  {timelineLoading ? "Analyzing…" : "Analyze timeline"}
+                </button>
+              </div>
+              {timelineError && <p className="inline-error" role="alert">{timelineError}</p>}
+              {timelineLoading && <p className="state-message">Verifying saved audio and measuring the original video…</p>}
+              {timelinePlan && <>
+                <p className={timelinePlan.renderable ? "timeline-clear" : "timeline-blocked"}>
+                  {timelinePlan.renderable ? "No unresolved timing conflicts found." : `Planning blocked by ${timelinePlan.blocking_issue_count} issue(s).`}
+                </p>
+                <dl className="timeline-summary">
+                  <div><dt>Original video</dt><dd>{timelinePlan.original_video_duration_ms === null ? "Unavailable" : formatTimestamp(timelinePlan.original_video_duration_ms / 1000)}</dd></div>
+                  <div><dt>Planned output</dt><dd>{timelinePlan.planned_output_video_duration_ms === null ? "Unavailable" : formatTimestamp(timelinePlan.planned_output_video_duration_ms / 1000)}</dd></div>
+                  <div><dt>Additional duration</dt><dd>{formatTimestamp(timelinePlan.total_added_duration_ms / 1000)}</dd></div>
+                  <div><dt>Segments to stretch</dt><dd>{timelinePlan.stretch_segment_count} / {timelinePlan.segment_count}</dd></div>
+                </dl>
+                {timelinePlan.issues.length > 0 && <div className="timeline-issues">
+                  <h4>Planning issues</h4>
+                  <ul>{timelinePlan.issues.map((issue, index) => <li key={`${issue.code}-${index}`}>
+                    <strong>{issue.severity === "blocking" ? "Blocking: " : "Warning: "}</strong>
+                    {issue.segment_ids[0]
+                      ? <button type="button" className="issue-link" onClick={() => locateReadinessSegment(issue.segment_ids[0])}>{issue.message}</button>
+                      : issue.message}
+                  </li>)}</ul>
+                </div>}
+                {timelinePlan.stretch_operations.length > 0 && <div className="timeline-operations">
+                  <h4>Planned stretch operations</h4>
+                  <ol>{timelinePlan.stretch_operations.map((operation) => {
+                    const timing = timelinePlan.segments.find((item) => item.segment_id === operation.segment_id);
+                    return <li key={`${operation.operation_order}-${operation.segment_id}`}>
+                      <button type="button" className="issue-link" onClick={() => locateReadinessSegment(operation.segment_id)}>
+                        Segment {timing?.position === undefined ? operation.operation_order : timing.position + 1}
+                      </button>
+                      <span> {formatTimestamp(operation.source_start_ms / 1000)}–{formatTimestamp(operation.source_end_ms / 1000)} · {operation.stretch_factor.toFixed(3)}× · +{operation.added_duration_ms} ms</span>
+                      {timing && <span> · Output audio {formatTimestamp(timing.output_audio_start_ms / 1000)}–{formatTimestamp(timing.output_audio_end_ms / 1000)}</span>}
+                    </li>;
+                  })}</ol>
+                </div>}
+              </>}
+            </section>}
             {segmentsLoading && <p className="state-message">Loading transcript…</p>}
             {segmentsError && <p className="message error-message" role="alert">{segmentsError}</p>}
             {!segmentsLoading && !segmentsError && segments.length === 0 && (

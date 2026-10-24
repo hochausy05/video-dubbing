@@ -23,6 +23,7 @@ from app.schemas import (
     SegmentRead,
     SegmentTranslationUpdate,
     TTSArtifactRead,
+    TTSTimelinePlan,
 )
 from app.services.uploads import (
     UploadStorageError,
@@ -37,6 +38,7 @@ from app.services.tts_readiness import (
     validate_project_tts_readiness,
 )
 from app.services.tts import TTS_MEDIA_TYPE, adaptive_rate_percent, translation_fingerprint
+from app.services.tts_timeline import build_project_timeline_plan
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -60,6 +62,23 @@ def get_project_tts_readiness(project_id: uuid.UUID) -> TTSReadiness:
         ) from error
     finally:
         database_engine.dispose()
+
+
+@router.get("/{project_id}/tts-timeline-plan", response_model=TTSTimelinePlan)
+def get_project_tts_timeline_plan(project_id: uuid.UUID) -> TTSTimelinePlan:
+    """Build a read-only, provenance-validated output timeline plan for TTS audio."""
+    engine = create_database_engine()
+    try:
+        sessions = create_session_factory(engine)
+        with sessions() as session:
+            try:
+                return build_project_timeline_plan(session, project_id)
+            except ProjectNotFoundError:
+                raise HTTPException(status_code=404, detail="Project not found.") from None
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to analyze the Project timeline.") from error
+    finally:
+        engine.dispose()
 
 
 @router.post(
