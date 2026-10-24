@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 
 class ProjectListItem(BaseModel):
@@ -33,3 +34,14 @@ class SegmentRead(BaseModel):
     end_seconds: Decimal
     source_text: str
     translated_text: str | None
+
+
+class SegmentTranslationUpdate(BaseModel):
+    """A bounded, non-empty Vietnamese translation update; no other fields are accepted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    translated_text: Annotated[
+        str,
+        StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=10_000),
+    ]

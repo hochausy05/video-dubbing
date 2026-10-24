@@ -67,6 +67,7 @@ Persistent entities use UUID identifiers and timezone-aware timestamps where app
 - Create/list/read projects.
 - Upload and retrieve controlled source video.
 - Read Project Segments in position order and stream the UUID-derived source video through `GET /projects/{project_id}/segments` and `GET /projects/{project_id}/video`; video responses support HTTP Range requests.
+- Update only a Segment's Vietnamese translation through `PATCH /projects/{project_id}/segments/{segment_id}`. The API accepts a trimmed non-empty string up to 10,000 characters, returns the saved Segment, and allows edits only when the current revision's translation Job succeeded and no Job is queued/running. This follows the current single-user API convention; the application has no authentication layer.
 - Create transcribe/translate jobs, read persisted job lifecycle state, and explicitly retry failed or interrupted Jobs as new records.
 - Read/edit segments and confirm a translation revision.
 - Create TTS/render jobs.

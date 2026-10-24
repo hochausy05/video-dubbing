@@ -25,6 +25,24 @@
 - **Result/limits:** Partial; EDIT-01 remains pending until a real persisted Project is opened in the browser and playback, seek, highlighting, and reload are confirmed.
 - **Commit/issue:** None recorded by the AI assistant.
 
+## `EDIT-01` — Manual browser acceptance close-out
+
+- **AI assistance:** Recorded the developer-provided manual acceptance and updated the task status; no EDIT-01 implementation changes were needed.
+- **Developer decision:** Accept the confirmed video playback, Chinese/Vietnamese display, timestamp seeking, playback-synchronized highlighting, timestamp alignment, and refresh persistence.
+- **Affected areas:** `TASKS.md` and append-only task audit records.
+- **Verification:** The developer manually confirmed the six specified browser behaviors. No additional runtime check is claimed.
+- **Result/limits:** EDIT-01 is complete based on developer-provided browser evidence.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `EDIT-02` — Editable Vietnamese Segment translations
+
+- **AI assistance:** Added a typed Project/Segment PATCH route that updates only `translated_text`, state and ownership checks, bounded non-empty payload validation, and a React Save/Cancel editor that retains drafts on failure. Added API unit tests for persistence and transcript integrity.
+- **Developer decision:** Reuse existing Segment fields and current single-user API conventions; require a succeeded current `translation_ready` Job; do not add schema metadata or migration. Existing translation preflight/transaction checks already reject non-null translations, protecting edits from retranslation overwrite.
+- **Affected areas:** Project API and schemas, React viewer/editor, focused API tests, architecture and task records.
+- **Verification:** 22 backend unit tests passed; frontend TypeScript/Vite production build, `compileall`, `pip check`, and `git diff --check` passed. Browser save/cancel/error/reload flow remains unverified.
+- **Result/limits:** Partial; EDIT-02 remains pending manual browser acceptance. Authentication is not implemented anywhere in this single-user app.
+- **Commit/issue:** None recorded by the AI assistant.
+
 ## `INIT-04` — Confirm development environment
 
 - **AI assistance:** Analyzed developer-provided machine results and updated environment-related documentation without installing packages or writing application code.

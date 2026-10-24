@@ -10,9 +10,9 @@
 ## Current Task
 
 - **Phase:** 6 — Gemini and translation review
-- **Task:** `EDIT-01`
-- **Next after verified completion:** `EDIT-01`.
-- **Scope:** See the `TRANS-02` task entry below.
+- **Task:** `EDIT-03`
+- **Next after verified completion:** `EDIT-03`.
+- **Scope:** See the `EDIT-03` task entry below.
 
 ## Phase 1 — Documents and environment
 
@@ -50,8 +50,8 @@
 
 - [x] `TRANS-01` — Translate each segment to Vietnamese with Gemini while preserving segment ID and source text. Evidence: the real FastAPI/worker flow sent four ASR Segments in one structured Gemini request; every Vietnamese result persisted to Supabase, and a pre-translation snapshot matched afterward for Segment IDs, source text, timestamps, and order. FastAPI returned `succeeded`/`translation_ready`; fresh SQLAlchemy and independent Supabase MCP queries confirmed persistence. No-speech completed `succeeded`/`no_speech` with zero Segments and no Gemini call. Nine unit tests reject missing, duplicate, unknown, malformed, and empty results, confirm an invalid later batch leaves all Segment data unchanged, and protect existing translations. JOB-02 failure and interruption transitions were also verified; task verification data was removed.
 - [x] `TRANS-02` — Add classified translation/quota failures and bounded retry. Mark simulated-provider tests explicitly as mocks. Evidence: deterministic mock-provider tests confirm HTTP 429/quota and authentication/configuration errors fail without retry; transient network errors and malformed structured results retry the same batch at most once; repeated transient and malformed responses fail without changing persisted Segment data or falling back to source text. Backoff is bounded to 0.5 seconds and tests replace it with a mock. `compileall`, `pip check`, all 14 unit tests, `git diff --check`, and secret/runtime/ignore checks passed. No real Gemini request or schema change was used.
-- [ ] `EDIT-01` — Show video and source/translated segment table. Verify rows match stable segment IDs.
-- [ ] `EDIT-02` — Edit, persist, and confirm a translation revision. Verify content survives refresh.
+- [x] `EDIT-01` — Show video and source/translated segment table. Verify rows match stable segment IDs. Evidence: developer manually confirmed the original video plays, Chinese source and Vietnamese translation display, timestamp selection seeks accurately, active Segment highlighting follows playback, timestamps align, and a browser refresh preserves transcript and translation data.
+- [x] `EDIT-02` — Edit, persist, and confirm a translation revision. Verify content survives refresh. Evidence: on a real Project, the user manually confirmed editing/saving Vietnamese translations, persistence after F5, Cancel discarding unsaved edits, rejection of empty/whitespace-only translations, and continued video playback, click-to-seek, timestamp display, and automatic Segment highlighting. Backend API validation and persistence are covered by 22 passing unit tests; frontend production build, compileall, pip check, and diff checks passed. The backend-disconnection/save-failure scenario was not manually tested.
 - [ ] `EDIT-03` — Validate translation before TTS. Flag empty/error segments and invalidate artifacts from older revisions.
 
 ## Phase 7 — Edge-TTS and FFmpeg output

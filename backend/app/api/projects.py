@@ -12,7 +12,13 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import create_database_engine, create_session_factory
 from app.models import Job, JobStatus, Project, Segment
-from app.schemas import JobCreated, JobDetail, ProjectListItem, SegmentRead
+from app.schemas import (
+    JobCreated,
+    JobDetail,
+    ProjectListItem,
+    SegmentRead,
+    SegmentTranslationUpdate,
+)
 from app.services.uploads import (
     UploadStorageError,
     UploadValidationError,
@@ -92,6 +98,88 @@ def get_project_video(project_id: uuid.UUID) -> FileResponse:
         )
     except SQLAlchemyError as error:
         raise HTTPException(status_code=500, detail="Unable to load the source video.") from error
+    finally:
+        database_engine.dispose()
+
+
+@router.patch(
+    "/{project_id}/segments/{segment_id}",
+    response_model=SegmentRead,
+)
+def update_project_segment_translation(
+    project_id: uuid.UUID,
+    segment_id: uuid.UUID,
+    payload: SegmentTranslationUpdate,
+) -> SegmentRead:
+    """Update only one persisted Vietnamese translation in a ready Project."""
+    database_engine = create_database_engine()
+    try:
+        session_factory = create_session_factory(database_engine)
+        with session_factory() as session, session.begin():
+            project = session.scalar(
+                select(Project).where(Project.id == project_id).with_for_update()
+            )
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found.")
+
+            latest_job = session.scalar(
+                select(Job)
+                .where(Job.project_id == project_id)
+                .order_by(desc(Job.created_at), desc(Job.id))
+                .limit(1)
+                .with_for_update()
+            )
+            active_job_id = session.scalar(
+                select(Job.id)
+                .where(
+                    Job.project_id == project_id,
+                    Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+                )
+                .limit(1)
+            )
+            if (
+                active_job_id is not None
+                or latest_job is None
+                or latest_job.status != JobStatus.SUCCEEDED.value
+                or latest_job.stage != "translation_ready"
+                or latest_job.input_revision != project.current_revision
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Translations can only be edited after the current translation Job succeeds.",
+                )
+
+            segment = session.scalar(
+                select(Segment)
+                .where(
+                    Segment.id == segment_id,
+                    Segment.project_id == project_id,
+                )
+                .with_for_update()
+            )
+            if segment is None:
+                raise HTTPException(status_code=404, detail="Segment not found.")
+            if segment.revision != project.current_revision:
+                raise HTTPException(status_code=409, detail="Segment is not in the current Project revision.")
+
+            # Updating this one field leaves the Whisper text, timestamps, identity, and order intact.
+            segment.translated_text = payload.translated_text
+            session.flush()
+            result = SegmentRead(
+                id=segment.id,
+                project_id=segment.project_id,
+                position=segment.position,
+                start_seconds=segment.start_seconds,
+                end_seconds=segment.end_seconds,
+                source_text=segment.source_text,
+                translated_text=segment.translated_text,
+            )
+        return result
+    except SQLAlchemyError as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to save the Segment translation.",
+        ) from error
     finally:
         database_engine.dispose()
 

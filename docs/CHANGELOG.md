@@ -223,3 +223,27 @@
 - **Tệp:** `backend/app/api/projects.py`, `backend/app/schemas/projects.py`, `backend/app/schemas/__init__.py`, `frontend/src/App.tsx`, `frontend/src/index.css`, `tests/unit/test_project_viewer_api.py`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** 18 unit test đạt; gồm sắp thứ tự Segment, Project không tồn tại, chặn đường dẫn video không chuẩn và HTTP Range. `npm run build`, `compileall`, `pip check`, `git diff --check`, kiểm tra secret/runtime/ignore đều đạt. Kiểm tra SQLAlchemy tới Supabase thất bại do cấu hình local trỏ tới tenant/user không hợp lệ; chưa xác minh video/transcript thật trên trình duyệt.
 - **Còn lại:** EDIT-01 vẫn chờ xác minh thủ công với Project thật: mở Project, phát video, seek Segment, kiểm tra tô sáng và tải lại trang để xác nhận dữ liệu được đọc lại từ backend.
+
+## 2026-10-25 — EDIT-01: Đóng nghiệm thu thủ công
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Ghi nhận xác nhận thủ công của nhà phát triển cho video, transcript Hoa–Việt, seek theo Segment, tô sáng theo timeline, khớp timestamp và dữ liệu còn nguyên sau khi tải lại trang. Không thay đổi phần triển khai EDIT-01.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Nhà phát triển xác nhận sáu hành vi nghiệm thu trên trình duyệt; không ghi nhận kiểm chứng nào khác.
+- **Còn lại:** Không trong EDIT-01.
+
+## 2026-10-25 — EDIT-02: Chỉnh sửa bản dịch tiếng Việt
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm PATCH chỉ cập nhật `translated_text` trong giao dịch, kiểm tra Project/Segment và Job hiện hành; thêm giao diện chỉnh sửa có Lưu/Hủy, trạng thái lưu và giữ nội dung nháp nếu lỗi. Không thêm cột hay migration.
+- **Tệp:** `backend/app/api/projects.py`, `backend/app/schemas/projects.py`, `backend/app/schemas/__init__.py`, `frontend/src/App.tsx`, `frontend/src/index.css`, `tests/unit/test_project_viewer_api.py`, `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 22 backend unit test đạt, gồm lưu/đọc lại bản dịch, payload lỗi/rỗng/quá dài, Project/Segment không hợp lệ, Job đang chạy, tính nguyên vẹn Segment và chặn worker khỏi ghi đè bản dịch đã sửa. `npm run build`, `compileall`, `pip check` và `git diff --check` đạt. Chưa kiểm tra thao tác editor thực tế trên trình duyệt.
+- **Còn lại:** EDIT-02 chờ kiểm thử trình duyệt với Project thật: Lưu, Hủy, lỗi lưu và tải lại để xác nhận dữ liệu lưu bền. API đang theo quy ước single-user hiện có; ứng dụng chưa có authentication.
+
+## 2026-10-25 — EDIT-02: Hoàn tất nghiệm thu chỉnh sửa bản dịch
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đóng EDIT-02 sau khi người dùng xác nhận thao tác sửa/lưu bản dịch tiếng Việt, dữ liệu giữ nguyên sau F5, Hủy bỏ thay đổi chưa lưu và từ chối nội dung rỗng/chỉ có khoảng trắng.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`
+- **Kiểm chứng:** Người dùng xác nhận trên Project thật rằng video vẫn phát, bấm Segment seek đúng timestamp, timestamp hiển thị chính xác và Segment hiện tại được tô sáng tự động. 22 unit test backend, frontend production build, `compileall`, `pip check` và `git diff --check` đã đạt trong lần kiểm chứng trước. Kịch bản ngắt kết nối backend/lưu thất bại không được kiểm thử thủ công.
+- **Còn lại:** Không còn tiêu chí EDIT-02 đang chờ; kịch bản lỗi lưu khi backend mất kết nối chưa được kiểm chứng.

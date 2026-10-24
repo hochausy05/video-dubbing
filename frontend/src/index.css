@@ -31,6 +31,19 @@ button {
   transition: background 160ms ease, transform 160ms ease;
 }
 
+textarea {
+  background: #fbfcfe;
+  border: 1px solid #cdd7e6;
+  border-radius: 0.6rem;
+  color: #172033;
+  font: inherit;
+  line-height: 1.5;
+  min-height: 6rem;
+  padding: 0.65rem 0.75rem;
+  resize: vertical;
+  width: 100%;
+}
+
 .back-button,
 .open-project,
 .segment-seek {
@@ -150,6 +163,7 @@ input[type="file"] {
 }
 
 input:focus-visible,
+textarea:focus-visible,
 button:focus-visible {
   outline: 3px solid rgb(53 89 216 / 28%);
   outline-offset: 2px;
@@ -427,6 +441,51 @@ button:focus-visible {
   color: #77859d;
   font-size: 0.84rem;
   font-style: italic;
+}
+
+.edit-translation {
+  background: transparent;
+  color: #3559d8;
+  font-size: 0.78rem;
+  margin-top: 0.5rem;
+  padding: 0;
+}
+
+.edit-translation:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+  transform: none;
+}
+
+.translation-editor {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+
+.translation-editor label {
+  color: #34425d;
+  font-size: 0.8rem;
+}
+
+.translation-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.2rem;
+}
+
+.translation-actions button {
+  padding: 0.55rem 0.8rem;
+}
+
+.translation-actions .secondary-button {
+  background: #edf1f7;
+  color: #34425d;
+}
+
+.translation-actions .secondary-button:hover:not(:disabled) {
+  background: #dfe6f0;
 }
 
 @media (max-width: 620px) {

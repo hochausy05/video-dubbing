@@ -103,6 +103,10 @@ function App() {
   const [segmentsError, setSegmentsError] = useState<string | null>(null);
   const [videoError, setVideoError] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
+  const [translationDraft, setTranslationDraft] = useState("");
+  const [savingSegmentId, setSavingSegmentId] = useState<string | null>(null);
+  const [translationSaveErrors, setTranslationSaveErrors] = useState<Record<string, string>>({});
 
   async function loadProjectJobs(projectList: Project[]) {
     await Promise.all(projectList.map(async (project) => {
@@ -197,6 +201,59 @@ function App() {
     if (video) {
       video.currentTime = segment.start_seconds;
       void video.play().catch(() => undefined);
+    }
+  }
+
+  function beginTranslationEdit(segment: Segment) {
+    setEditingSegmentId(segment.id);
+    setTranslationDraft(segment.translated_text ?? "");
+    setTranslationSaveErrors((current) => {
+      const next = { ...current };
+      delete next[segment.id];
+      return next;
+    });
+  }
+
+  function cancelTranslationEdit(segmentId: string) {
+    setEditingSegmentId(null);
+    setTranslationDraft("");
+    setTranslationSaveErrors((current) => {
+      const next = { ...current };
+      delete next[segmentId];
+      return next;
+    });
+  }
+
+  async function saveTranslation(segment: Segment) {
+    const translatedText = translationDraft.trim();
+    if (!translatedText) {
+      setTranslationSaveErrors((current) => ({ ...current, [segment.id]: "Enter a Vietnamese translation before saving." }));
+      return;
+    }
+    setSavingSegmentId(segment.id);
+    setTranslationSaveErrors((current) => {
+      const next = { ...current };
+      delete next[segment.id];
+      return next;
+    });
+    try {
+      const response = await fetch(`/api/projects/${selectedProject?.id}/segments/${segment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ translated_text: translatedText }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      const updatedSegment = (await response.json()) as Segment;
+      setSegments((current) => current.map((item) => item.id === updatedSegment.id ? updatedSegment : item));
+      setEditingSegmentId(null);
+      setTranslationDraft("");
+    } catch (saveError) {
+      setTranslationSaveErrors((current) => ({
+        ...current,
+        [segment.id]: saveError instanceof Error ? saveError.message : "Unable to save this translation.",
+      }));
+    } finally {
+      setSavingSegmentId(null);
     }
   }
 
@@ -418,9 +475,31 @@ function App() {
                 <button type="button" className="segment-seek" onClick={() => seekToSegment(segment)} aria-label={`Seek to ${formatTimestamp(segment.start_seconds)}`}>
                   {formatTimestamp(segment.start_seconds)}
                 </button>
-                <div className="segment-languages">
+                  <div className="segment-languages">
                   <p>{segment.source_text}</p>
-                  <p className={segment.translated_text ? "translated-text" : "translation-pending"}>{segment.translated_text || "Vietnamese translation not available yet."}</p>
+                    {editingSegmentId === segment.id ? (
+                      <div className="translation-editor">
+                        <label htmlFor={`translation-${segment.id}`}>Vietnamese translation</label>
+                        <textarea id={`translation-${segment.id}`} value={translationDraft} maxLength={10000}
+                          onChange={(event) => setTranslationDraft(event.target.value)} disabled={savingSegmentId === segment.id} />
+                        <span className="field-help">Up to 10,000 characters. Empty translations cannot be saved.</span>
+                        {translationSaveErrors[segment.id] && <p className="inline-error" role="alert">{translationSaveErrors[segment.id]}</p>}
+                        <div className="translation-actions">
+                          <button type="button" onClick={() => void saveTranslation(segment)} disabled={savingSegmentId === segment.id || !translationDraft.trim()}>
+                            {savingSegmentId === segment.id ? "Saving…" : "Save"}
+                          </button>
+                          <button type="button" className="secondary-button" onClick={() => cancelTranslationEdit(segment.id)} disabled={savingSegmentId === segment.id}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <p className={segment.translated_text ? "translated-text" : "translation-pending"}>{segment.translated_text || "Vietnamese translation not available yet."}</p>
+                        <button type="button" className="edit-translation" onClick={() => beginTranslationEdit(segment)}
+                          disabled={Boolean(editingSegmentId) || selectedJobStatus !== "succeeded"}>
+                          {segment.translated_text ? "Edit translation" : "Add translation"}
+                        </button>
+                      </>
+                    )}
                 </div>
               </li>)}
             </ol>}

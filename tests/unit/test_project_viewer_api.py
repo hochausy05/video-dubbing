@@ -9,12 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.main import app
-from app.models import Project, Segment
+from app.models import Job, Project, Segment
 from app.models.base import Base
+from app.services.translation import TranslationConflictError, translate_project
 from app.services.uploads import source_relative_path
 
 
@@ -36,6 +37,16 @@ class ProjectViewerApiTests(unittest.TestCase):
         )
         with Session(self.engine) as session, session.begin():
             session.add(self.project)
+            session.add(
+                Job(
+                    id=uuid.UUID("30000000-0000-0000-0000-000000000001"),
+                    project_id=PROJECT_ID,
+                    operation_type="transcribe_translate",
+                    input_revision=0,
+                    status="succeeded",
+                    stage="translation_ready",
+                )
+            )
             session.add_all(
                 [
                     Segment(
@@ -117,6 +128,142 @@ class ProjectViewerApiTests(unittest.TestCase):
         response = self.client.get(f"/projects/{PROJECT_ID}/video")
         self.assertEqual(response.status_code, 404)
         self.assertNotIn("private", response.text)
+
+    def test_translation_update_persists_only_translation_and_returns_segment(self) -> None:
+        segment_id = "00000000-0000-0000-0000-000000000001"
+        response = self.client.patch(
+            f"/projects/{PROJECT_ID}/segments/{segment_id}",
+            json={"translated_text": "  Xin chào bằng tiếng Việt.  "},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["translated_text"], "Xin chào bằng tiếng Việt.")
+        self.assertEqual(body["source_text"], "first")
+        self.assertEqual(body["position"], 0)
+        self.assertEqual((body["start_seconds"], body["end_seconds"]), ("0.000", "1.000"))
+        reloaded = self.client.get(f"/projects/{PROJECT_ID}/segments")
+        self.assertEqual(reloaded.status_code, 200)
+        self.assertEqual(reloaded.json()[0]["translated_text"], "Xin chào bằng tiếng Việt.")
+        with Session(self.engine) as session, session.begin():
+            persisted = session.get(Segment, uuid.UUID(segment_id))
+            self.assertEqual(persisted.translated_text, "Xin chào bằng tiếng Việt.")
+            self.assertEqual(persisted.source_text, "first")
+            self.assertEqual((persisted.start_seconds, persisted.end_seconds), (0, 1))
+            self.assertEqual(persisted.position, 0)
+            self.assertEqual(persisted.id, uuid.UUID(segment_id))
+            all_segments = session.scalars(
+                select(Segment).where(Segment.project_id == PROJECT_ID).order_by(Segment.position)
+            ).all()
+            self.assertEqual(
+                [item.id for item in all_segments],
+                [
+                    uuid.UUID(segment_id),
+                    uuid.UUID("00000000-0000-0000-0000-000000000002"),
+                ],
+            )
+            session.add(
+                Job(
+                    id=uuid.UUID("30000000-0000-0000-0000-000000000004"),
+                    project_id=PROJECT_ID,
+                    operation_type="transcribe_translate",
+                    input_revision=0,
+                    status="running",
+                    stage="translating",
+                )
+            )
+
+        def forbidden_client_factory() -> object:
+            raise AssertionError(
+                "A transcript containing an edited translation must not be retranslated."
+            )
+
+        with self.assertRaises(TranslationConflictError):
+            translate_project(
+                self.engine,
+                project_id=PROJECT_ID,
+                job_id=uuid.UUID("30000000-0000-0000-0000-000000000004"),
+                input_revision=0,
+                stage_callback=lambda _stage: None,
+                client_factory=forbidden_client_factory,
+                model="test-model",
+            )
+        with Session(self.engine) as session:
+            self.assertEqual(
+                session.get(Segment, uuid.UUID(segment_id)).translated_text,
+                "Xin chào bằng tiếng Việt.",
+            )
+
+    def test_update_returns_404_for_missing_project_or_segment_from_another_project(self) -> None:
+        segment_id = "00000000-0000-0000-0000-000000000001"
+        missing_project = self.client.patch(
+            f"/projects/{uuid.uuid4()}/segments/{segment_id}",
+            json={"translated_text": "Bản dịch."},
+        )
+        self.assertEqual(missing_project.status_code, 404)
+
+        other_project_id = uuid.UUID("bdfe8938-083c-49b8-b12a-71f4da86d703")
+        with Session(self.engine) as session, session.begin():
+            session.add(
+                Project(id=other_project_id, name="other project", current_revision=0)
+            )
+            session.add(
+                Job(
+                    id=uuid.UUID("30000000-0000-0000-0000-000000000002"),
+                    project_id=other_project_id,
+                    operation_type="transcribe_translate",
+                    input_revision=0,
+                    status="succeeded",
+                    stage="translation_ready",
+                )
+            )
+        cross_project = self.client.patch(
+            f"/projects/{other_project_id}/segments/{segment_id}",
+            json={"translated_text": "Không được lưu."},
+        )
+        self.assertEqual(cross_project.status_code, 404)
+
+    def test_update_rejects_missing_empty_wrong_type_extra_and_oversized_payload(self) -> None:
+        segment_id = "00000000-0000-0000-0000-000000000001"
+        invalid_payloads = [
+            {},
+            {"translated_text": "  \n "},
+            {"translated_text": 123},
+            {"translated_text": "Bản dịch", "source_text": "changed"},
+            {"translated_text": "x" * 10_001},
+        ]
+        for payload in invalid_payloads:
+            with self.subTest(payload=str(payload)[:50]):
+                result = self.client.patch(
+                    f"/projects/{PROJECT_ID}/segments/{segment_id}", json=payload
+                )
+                self.assertEqual(result.status_code, 422)
+
+        missing_segment = self.client.patch(
+            f"/projects/{PROJECT_ID}/segments/{uuid.uuid4()}",
+            json={"translated_text": "Bản dịch."},
+        )
+        self.assertEqual(missing_segment.status_code, 404)
+
+    def test_active_job_prevents_translation_edit_without_mutation(self) -> None:
+        segment_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+        with Session(self.engine) as session, session.begin():
+            session.add(
+                Job(
+                    id=uuid.UUID("30000000-0000-0000-0000-000000000003"),
+                    project_id=PROJECT_ID,
+                    operation_type="transcribe_translate",
+                    input_revision=0,
+                    status="running",
+                    stage="translating",
+                )
+            )
+        result = self.client.patch(
+            f"/projects/{PROJECT_ID}/segments/{segment_id}",
+            json={"translated_text": "Bản dịch mới."},
+        )
+        self.assertEqual(result.status_code, 409)
+        with Session(self.engine) as session:
+            self.assertIsNone(session.get(Segment, segment_id).translated_text)
 
 
 if __name__ == "__main__":
