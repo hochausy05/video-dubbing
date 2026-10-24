@@ -38,4 +38,5 @@ class TTSOptimizationResult(BaseModel):
     resolved_conflict_segment_ids: list[UUID]
     remaining_conflicts: list[RemainingTTSConflict]
     renderable: bool
+    stale: bool
     recommendation: str | None

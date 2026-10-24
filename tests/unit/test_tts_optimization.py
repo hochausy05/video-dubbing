@@ -17,6 +17,7 @@ from app.main import app
 from app.models import Artifact, Job, Project, Segment
 from app.models.base import Base
 from app.services.tts import TTSError, translation_fingerprint
+from app.services.audio_normalization import write_normalization_metadata
 from app.services.tts_optimization import (
     enqueue_tts_optimization,
     optimize_project_tts,
@@ -94,6 +95,14 @@ class TtsOptimizationTests(unittest.TestCase):
                 audio_path = self.storage / Path(reference)
                 audio_path.parent.mkdir(parents=True, exist_ok=True)
                 audio_path.write_bytes(b"valid fixture audio")
+                write_normalization_metadata(audio_path, {
+                    "version": "boundary-silence-v1",
+                    "original_duration_ms": duration_ms,
+                    "final_duration_ms": duration_ms,
+                    "removed_silence_ms": 0,
+                    "trimmed": False,
+                    "skipped_reason": "Fixture already normalized.",
+                })
 
     def _patches(self):
         return (
@@ -115,6 +124,14 @@ class TtsOptimizationTests(unittest.TestCase):
             segment_id = uuid.UUID(destination.name.rsplit("-", 1)[0])
             requested_rates.append((segment_id, rate_percent))
             destination.write_bytes(b"new measured audio")
+            write_normalization_metadata(destination, {
+                "version": "boundary-silence-v1",
+                "original_duration_ms": measured_durations[rate_percent],
+                "final_duration_ms": measured_durations[rate_percent],
+                "removed_silence_ms": 0,
+                "trimmed": False,
+                "skipped_reason": "Synthetic optimizer fixture.",
+            })
             return measured_durations[rate_percent]
 
         patches = self._patches()
@@ -188,7 +205,19 @@ class TtsOptimizationTests(unittest.TestCase):
                              (Decimal("0"), Decimal("1"), "Xin chào 0."))
         result = self._read_result()
         self.assertTrue(result.renderable)
+        self.assertFalse(result.stale)
         self.assertEqual(result.resolved_conflict_segment_ids, [SEGMENT_IDS[0]])
+
+    def test_translation_edit_hides_stale_optimization_result_after_reload(self) -> None:
+        self._run({6: 1_300})
+        with Session(self.engine) as session, session.begin():
+            session.get(Segment, SEGMENT_IDS[0]).translated_text = "Bản dịch đã được chỉnh sửa."
+        result = self._read_result()
+        self.assertTrue(result.stale)
+        self.assertFalse(result.renderable)
+        self.assertEqual(result.updated_segments, [])
+        self.assertEqual(result.remaining_conflicts, [])
+        self.assertIn("stale", result.recommendation or "")
 
     def test_repeated_reanalysis_uses_measured_durations_not_rate_expectations(self) -> None:
         count, requested = self._run({6: 1_650, 14: 1_350})

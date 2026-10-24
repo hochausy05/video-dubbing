@@ -25,6 +25,7 @@ from app.schemas import (
     TTSArtifactRead,
     TTSTimelinePlan,
     TTSOptimizationResult,
+    TTSNormalizationResult,
 )
 from app.services.uploads import (
     UploadStorageError,
@@ -39,8 +40,10 @@ from app.services.tts_readiness import (
     validate_project_tts_readiness,
 )
 from app.services.tts import TTS_MEDIA_TYPE, adaptive_rate_percent, translation_fingerprint
+from app.services.audio_normalization import read_normalization_metadata
 from app.services.tts_timeline import build_project_timeline_plan
 from app.services.tts_optimization import enqueue_tts_optimization, read_tts_optimization_result
+from app.services.tts_normalization import enqueue_tts_normalization, read_tts_normalization_result
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -133,6 +136,51 @@ def get_project_tts_optimization_result(project_id: uuid.UUID, job_id: uuid.UUID
 
 
 @router.post(
+    "/{project_id}/tts-normalization-jobs",
+    response_model=JobCreated,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def enqueue_project_tts_normalization(project_id: uuid.UUID) -> JobCreated:
+    """Queue safe normalization of the current audio without regenerating speech."""
+    engine = create_database_engine()
+    try:
+        sessions = create_session_factory(engine)
+        with sessions() as session, session.begin():
+            try:
+                return enqueue_tts_normalization(session, project_id)
+            except ProjectNotFoundError:
+                raise HTTPException(status_code=404, detail="Project not found.") from None
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from None
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to enqueue TTS audio normalization.") from error
+    finally:
+        engine.dispose()
+
+
+@router.get(
+    "/{project_id}/tts-normalization-jobs/{job_id}",
+    response_model=TTSNormalizationResult,
+)
+def get_project_tts_normalization_result(project_id: uuid.UUID, job_id: uuid.UUID) -> TTSNormalizationResult:
+    """Return persisted normalization Job state and measured per-Segment results."""
+    engine = create_database_engine()
+    try:
+        sessions = create_session_factory(engine)
+        with sessions() as session:
+            try:
+                return read_tts_normalization_result(session, project_id, job_id)
+            except ProjectNotFoundError:
+                raise HTTPException(status_code=404, detail="Project not found.") from None
+            except LookupError:
+                raise HTTPException(status_code=404, detail="TTS normalization Job not found.") from None
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to read TTS normalization results.") from error
+    finally:
+        engine.dispose()
+
+
+@router.post(
     "/{project_id}/tts-jobs",
     response_model=JobCreated,
     status_code=status.HTTP_202_ACCEPTED,
@@ -174,7 +222,7 @@ def enqueue_project_tts_job(project_id: uuid.UUID) -> JobCreated:
         database_engine.dispose()
 
 
-def _artifact_is_current(artifact: Artifact, segment: Segment) -> bool:
+def _artifact_is_current(artifact: Artifact, segment: Segment, job: Job | None = None) -> bool:
     if not segment.translated_text or not segment.translated_text.strip() or not artifact.voice:
         return False
     try:
@@ -200,7 +248,18 @@ def _artifact_is_current(artifact: Artifact, segment: Segment) -> bool:
     if artifact.storage_reference != expected:
         return False
     try:
-        return resolve_storage_path(PurePosixPath(expected)).is_file()
+        audio_path = resolve_storage_path(PurePosixPath(expected))
+        if not audio_path.is_file():
+            return False
+        if job is not None and job.operation_type == "tts_normalize":
+            metadata = read_normalization_metadata(audio_path)
+            return bool(
+                job.status == JobStatus.SUCCEEDED.value
+                and job.stage == "tts_normalization_complete"
+                and metadata is not None
+                and metadata.get("final_duration_ms") == artifact.duration_ms
+            )
+        return True
     except (UploadStorageError, OSError, ValueError):
         return False
 
@@ -224,8 +283,12 @@ def list_project_tts_audio(project_id: uuid.UUID) -> list[TTSArtifactRead]:
                 )
                 .order_by(Segment.position, Segment.id)
             ).all()
-            return [
-                TTSArtifactRead(
+            output: list[TTSArtifactRead] = []
+            for artifact, segment in rows:
+                job = session.get(Job, artifact.job_id)
+                if artifact.duration_ms is None:
+                    continue
+                output.append(TTSArtifactRead(
                     id=artifact.id,
                     project_id=artifact.project_id,
                     segment_id=segment.id,
@@ -233,11 +296,9 @@ def list_project_tts_audio(project_id: uuid.UUID) -> list[TTSArtifactRead]:
                     voice=artifact.voice or "",
                     rate_percent=artifact.rate_percent or 0,
                     audio_url=f"/api/projects/{project_id}/segments/{segment.id}/audio",
-                    current=_artifact_is_current(artifact, segment),
-                )
-                for artifact, segment in rows
-                if artifact.duration_ms is not None
-            ]
+                    current=_artifact_is_current(artifact, segment, job),
+                ))
+            return output
     except SQLAlchemyError as error:
         raise HTTPException(status_code=500, detail="Unable to list generated Segment audio.") from error
     finally:
@@ -264,7 +325,8 @@ def get_project_segment_audio(project_id: uuid.UUID, segment_id: uuid.UUID) -> F
                     Artifact.is_current.is_(True),
                 ).order_by(desc(Artifact.created_at), desc(Artifact.id)).limit(1)
             )
-            if artifact is None or not _artifact_is_current(artifact, segment):
+            artifact_job = session.get(Job, artifact.job_id) if artifact is not None else None
+            if artifact is None or not _artifact_is_current(artifact, segment, artifact_job):
                 raise HTTPException(status_code=404, detail="Current Segment audio is not available.")
             expected = (
                 f"projects/{project_id}/jobs/{artifact.job_id}/tts/{segment_id}.mp3"

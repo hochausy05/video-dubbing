@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
+import shutil
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +18,22 @@ from app.services.tts import (
     measured_audio_duration_ms,
     synthesize_segment,
 )
+from app.services.audio_normalization import AudioNormalizationResult
+from app.services.audio_normalization import measured_audio_duration_ms as measure_audio_file
+from app.services.audio_normalization import read_normalization_metadata
+from test_audio_normalization import make_mp3
+
+
+def _fake_normalizer(source: Path, destination: Path) -> AudioNormalizationResult:
+    shutil.copy2(source, destination)
+    return AudioNormalizationResult(1_742, 1_742, 0, False, "Fixture has no trailing silence.")
+
+
+def _copy_fake_normalizer(duration_ms: int):
+    def normalize(source: Path, destination: Path) -> AudioNormalizationResult:
+        shutil.copy2(source, destination)
+        return AudioNormalizationResult(duration_ms, duration_ms, 0, False, "Fixture has no trailing silence.")
+    return normalize
 
 
 class AdaptivePacingTests(unittest.TestCase):
@@ -43,6 +60,35 @@ class AdaptivePacingTests(unittest.TestCase):
 
 
 class EdgeTtsServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_synthesized_audio_is_normalized_and_raw_media_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fixture = root / "provider-output.mp3"
+            destination = root / "segment.mp3"
+            make_mp3(fixture, [("speech", 0.3), ("silence", 1.0)])
+            original = fixture.read_bytes()
+
+            class Communicate:
+                def __init__(self, text: str, voice: str, **kwargs) -> None:
+                    self.text, self.voice, self.rate = text, voice, kwargs["rate"]
+
+                async def save(self, target: str) -> None:
+                    shutil.copy2(fixture, target)
+
+            duration_ms = await synthesize_segment(
+                "Xin chào", destination, voice="vi-VN-HoaiMyNeural", rate_percent=20,
+                semaphore=asyncio.Semaphore(1), communicate_factory=Communicate,
+            )
+            raw_path = root / "segment.original.mp3"
+            metadata = read_normalization_metadata(destination)
+            self.assertEqual(raw_path.read_bytes(), original)
+            self.assertLess(duration_ms, measure_audio_file(raw_path))
+            self.assertEqual(measure_audio_file(destination), duration_ms)
+            self.assertEqual(metadata["original_duration_ms"], measure_audio_file(raw_path))
+            self.assertEqual(metadata["final_duration_ms"], duration_ms)
+            self.assertEqual(metadata["rate_percent"], 20)
+            self.assertEqual(len(str(metadata["translation_fingerprint"])), 64)
+
     async def test_transient_failure_retries_once_then_succeeds_without_changing_text(self) -> None:
         attempts = 0
         sleeps: list[float] = []
@@ -68,7 +114,7 @@ class EdgeTtsServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir, patch(
             "app.services.tts.measured_audio_duration_ms", return_value=1742
-        ):
+        ), patch("app.services.tts.normalize_audio_file", side_effect=_fake_normalizer):
             destination = Path(temp_dir) / "segment.mp3"
             duration = await synthesize_segment(
                 original_text,
@@ -156,7 +202,7 @@ class EdgeTtsServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir, patch(
             "app.services.tts.measured_audio_duration_ms", return_value=900
-        ):
+        ), patch("app.services.tts.normalize_audio_file", side_effect=_copy_fake_normalizer(900)):
             semaphore = asyncio.Semaphore(2)
             await asyncio.gather(*(
                 synthesize_segment(
@@ -189,10 +235,10 @@ class EdgeTtsServiceTests(unittest.IsolatedAsyncioTestCase):
                 stdout='{"format":{"duration":"1.2346"},"streams":[{"codec_type":"audio"}]}',
                 stderr="",
             )
-            with patch("app.services.tts.subprocess.run", return_value=successful):
+            with patch("app.services.audio_normalization.subprocess.run", return_value=successful):
                 self.assertEqual(measured_audio_duration_ms(media), 1235)
             zero = subprocess.CompletedProcess(args=[], returncode=0, stdout='{"format":{"duration":"0"}}', stderr="")
-            with patch("app.services.tts.subprocess.run", return_value=zero), self.assertRaises(TTSError):
+            with patch("app.services.audio_normalization.subprocess.run", return_value=zero), self.assertRaises(TTSError):
                 measured_audio_duration_ms(media)
 
 

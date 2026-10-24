@@ -311,3 +311,51 @@
 - **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Người dùng xác nhận đã nghe và chấp nhận audio tiếng Việt tối ưu; sau khi tải lại, kết quả tối ưu, metadata audio và Job vẫn còn. Bản dịch và timestamp nguồn không đổi; video preview, click-to-seek và chỉnh sửa hiện có vẫn hoạt động. Người dùng cung cấp kết quả tự động trước đó: 13 kiểm thử tối ưu hóa, 70 backend unit test, frontend build, `compileall`, `pip check`, `git diff --check` đều đạt; không chạy lại các kiểm tra này trong lần đóng task.
 - **Còn lại:** Sáu xung đột còn lại có phần vượt lần lượt 64, 536, 216, 232, 232 và 920 ms; `demo2` chưa renderable. Giải quyết xung đột timeline và render video vẫn là công việc tương lai, không thuộc nghiệm thu TTS-03.
+
+## 2026-10-25 — TIMELINE-01: Hướng dẫn xử lý xung đột thời lượng
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Mở rộng viewer để liệt kê xung đột theo Segment ID ổn định, bản dịch hiện tại, thời lượng nguồn, duration TTS đã đo, speaking rate và phần vượt còn lại; nút dẫn tới editor EDIT-02. Hướng dẫn rút gọn bản dịch do người dùng quyết định. Sau khi lưu, timeline/optimization kết quả cũ bị xóa khỏi UI, endpoint nhận diện kết quả optimization stale sau refresh, và audio cũ được đánh dấu stale theo fingerprint. Tạo lại TTS dùng Job toàn Project hiện có; audio cũ giữ nguyên tới khi bộ audio mới được kiểm chứng và publish transactionally. UI thông báo rate tối ưu TTS-03 sẽ bị thay bằng adaptive rate mặc định. Tình trạng timeline-ready tiếp tục dựa trên planner TTS-02; không có video nào được render.
+- **Tệp:** `TASKS.md`, `docs/ARCHITECTURE.md`, `frontend/src/App.tsx`, `frontend/src/index.css`, `tests/unit/test_tts_pipeline.py`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 72 backend unit test đạt, gồm kiểm tra translation mới làm Artifact cũ stale và toàn bộ TTS regeneration publish an toàn sau khi audio mới được tạo; `npm run build`, `compileall`, `pip check`, `git diff --check` và kiểm tra secret/ignore đạt. Chưa thực hiện nghiệm thu trình duyệt hoặc gọi Edge-TTS thật trong task này.
+- **Còn lại:** TIMELINE-01 vẫn một phần, chờ người dùng nghiệm thu thủ công trên `demo2`: xem chi tiết sáu conflict, mở Segment và sửa bản dịch, lưu, xác nhận audio cũ stale, chạy full TTS Job và kiểm tra audio mới/rate adaptive; xác nhận rate TTS-03 cần tối ưu lại nếu muốn, chạy lại phân tích timeline, kiểm tra xung đột mới và chỉ thấy timeline-ready khi planner trả về 0 blockers. Sáu conflict hiện tại vẫn ngăn render cho tới khi được giải quyết. Không triển khai render, mixing hoặc rewrite tự động.
+
+## 2026-10-25 — TIMELINE-01: Điều tra duration TTS của Segment 10
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Điều tra luồng save translation → TTS Job → Edge-TTS/FFprobe → Artifact → timeline API. Không tìm thấy lỗi production; thêm kiểm thử hồi quy nối PATCH translation, từ chối Artifact cũ, enqueue/chạy full TTS regeneration, chọn Artifact mới và tính lại timeline.
+- **Tệp:** `tests/unit/test_tts_pipeline.py`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Trên `demo2`, SQLAlchemy và Supabase MCP cùng xác nhận Segment 10 hiện có bản dịch `Đâu đến nỗi` và Artifact mới nhất đúng `tts` Job, `succeeded`/`tts_ready`, `is_current=true`, rate 20%, duration 1.872 ms. Fingerprint của Artifact hiện hành khớp bản dịch đã lưu; fingerprint của Artifact cũ khớp bản dịch ban đầu. File MP3 hiện tại và file cũ có hash khác nhau; FFprobe đo cả hai là 1.872 ms, 78 frame, 24 kHz/48 kbps. Endpoint `/tts-audio` trả Artifact hiện hành; timeline API chọn duration 1.872 ms, 920 ms excess và sáu blocker. Pacing heuristic cho cả bản cũ (5 token/0,68 s) và mới (3 token/0,68 s) vẫn chọn +20%. `silencedetect` ở ngưỡng -50 dB ghi nhận khoảng 1,001 s vùng im lặng cuối ở file mới và 0,822 s ở file cũ; đây là quan sát mức tín hiệu, không phải sửa duration. 73 backend unit test, frontend build, `compileall`, `pip check` và `git diff --check` đạt.
+- **Còn lại:** Chưa có lỗi cache, metadata cũ, Artifact chọn sai hay duration bị làm tròn cố định được xác nhận; duration 1.872 ms phản ánh media MP3 mới. Chưa nghiệm thu lại trong trình duyệt. Cần quyết định riêng liệu khoảng lặng từ Edge-TTS có nên được trim/đo riêng ở tác vụ sau; lần điều tra này không thay đổi media hoặc dữ liệu `demo2`. TIMELINE-01 vẫn một phần.
+
+## 2026-10-25 — UI-03: Thiết kế lại Project Viewer đáp ứng màn hình
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Mở rộng viewer theo ba vùng video, transcript/chỉnh sửa và TTS/timeline trên màn hình rộng; chuyển sang hai cột ở laptop và bố cục xếp chồng trên màn hình nhỏ. Panel video và timeline sticky trên desktop rộng; danh sách Segment tự cuộn, điều hướng conflict cuộn trong danh sách và làm nổi bật Segment đích. Các mục Planning issues và stretch operations có thể thu gọn.
+- **Tệp:** `TASKS.md`, `frontend/src/App.tsx`, `frontend/src/index.css`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** `npm run build` và `git diff --check` đạt. Chưa chạy nghiệm thu trình duyệt ở các kích thước desktop, laptop và mobile.
+- **Còn lại:** UI-03 vẫn một phần cho tới khi kiểm tra thủ công video, transcript, chỉnh sửa/lưu, phát audio, conflict navigation, timeline controls và trạng thái sau khi tải lại ở các kích thước yêu cầu. TIMELINE-01 vẫn chờ nghiệm thu riêng.
+
+## 2026-10-25 — TTS-04: Chuẩn hóa audio TTS theo khoảng lặng
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm dịch vụ FFmpeg phân tích tín hiệu audio đã giải mã và chỉ cắt khoảng lặng dư ở cuối file khi phát hiện đủ tin cậy; giữ 120 ms đệm biên, ngưỡng -60 dB, thời lượng im lặng tối thiểu 500 ms, không cắt khoảng dừng nội bộ. Giữ MP3 Edge-TTS gốc và sidecar provenance có phiên bản. TTS-01 và candidate TTS-03 dùng cùng chính sách; thêm Job `tts_normalize` để tái xử lý Artifact hiện có không gọi Edge-TTS, giữ nguyên voice/rate và publish Artifact generation nguyên tử. Timeline tiếp tục dùng duration FFprobe của media đã publish và là nguồn quyết định duy nhất về khả năng render.
+- **Tệp:** `backend/app/services/audio_normalization.py`, `backend/app/services/tts.py`, `backend/app/services/tts_normalization.py`, `backend/app/api/projects.py`, `backend/app/api/jobs.py`, `backend/app/schemas/tts_normalization.py`, `backend/app/services/tts_optimization.py`, `backend/app/services/tts_timeline.py`, `backend/app/workers/job_worker.py`, `frontend/src/App.tsx`, `frontend/src/index.css`, `tests/unit/test_audio_normalization.py`, `tests/unit/test_tts.py`, `tests/unit/test_tts_optimization.py`, `tests/unit/test_tts_normalization.py`, `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 87 backend unit test đạt, gồm kiểm thử FFmpeg/FFprobe trên audio tổng hợp và kiểm thử API/worker lưu trữ cục bộ có Edge-TTS bị mock; `npm run build`, `compileall`, `pip check` và `git diff --check` đạt. Không thay đổi schema hoặc dependency; không kết nối/ghi dữ liệu Supabase và không chạy normalize trên Project thật.
+- **Còn lại:** TTS-04 vẫn một phần. Chưa thực hiện browser acceptance, phát/nghe audio đã normalize hoặc xác nhận kết quả timeline trên `demo2`; không tuyên bố thời lượng/conflict thực tế đã thay đổi. TIMELINE-01 giữ nguyên trạng thái.
+
+## 2026-10-25 — TTS-04: Điều tra Job normalize thất bại trên demo2
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Xác nhận thông báo stale là lỗi so sánh thứ tự: worker snapshot Artifact theo thứ tự Segment nhưng truy vấn publish đọc theo UUID. Chuẩn hóa so sánh theo Artifact ID và thêm regression test với UUID đảo thứ tự; UI nói rõ timeline sau khi phân tích vẫn dựa trên generation đang publish nếu Job normalize thất bại.
+- **Tệp:** `backend/app/services/tts_normalization.py`, `tests/unit/test_tts_normalization.py`, `frontend/src/App.tsx`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** SQLAlchemy và Supabase MCP xác nhận Job lỗi `87c450d9-2ee0-4984-8775-992bdd1d28c2` có 0 Artifact; generation hiện hành là Job TTS thành công `fad4ffec-6d88-4a2f-8385-f594e3bc0fd3` với đủ 11 Artifact hiện hành, rate +20%. Segment 10 hiện 1.045 ms từ file thực, sidecar ghi 1.872 ms nguồn và 827 ms đã bỏ; API timeline trả 23.730 ms với hai blocker: Segment 3 còn 246 ms và Segment 10 còn 93 ms. Chưa thay đổi dữ liệu hoặc media demo2. Kiểm thử regression về thứ tự UUID và kiểm thử normalization tập trung đạt.
+- **Còn lại:** TTS-04 vẫn một phần; cần nghiệm thu browser và nghe audio sau thao tác người dùng. Job lỗi không phải generation hiện tại; generation hiện tại đến từ TTS Job thành công. TIMELINE-01 không đổi trạng thái.
+
+## 2026-10-25 — TTS-04: Hoàn tất nghiệm thu chuẩn hóa audio
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đóng TTS-04 sau khi người dùng nghiệm thu trên `demo2`. Job `tts_normalize` đạt `tts_normalization_complete`, xử lý 11 file; không file nào cần rút ngắn thêm và không có duration bổ sung được thu hồi vì audio hiện hành đã chuẩn hóa. Chạy lại giữ nguyên duration. Segment 10 duy trì 1.045 ms so với 1.872 ms ban đầu. Artifact generation hiện hành nhất quán; Job normalize lỗi trước đó không publish Artifact.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Người dùng xác nhận kết quả trong browser và chấp nhận audio đã chuẩn hóa. Timeline còn 2 blocker: Segment 3 vượt 246 ms, Segment 10 vượt 93 ms; planned output 23.730 ms, do đó không tuyên bố Project renderable. Bộ kiểm thử backend 88 test, frontend production build, `compileall`, `pip check` và `git diff --check` đã đạt trong lần xác minh trước.
+- **Còn lại:** Xung đột timeline và render video vẫn là công việc riêng; TIMELINE-01 giữ trạng thái Một phần.

@@ -76,6 +76,11 @@ button:disabled {
   padding: 4rem 0 5rem;
 }
 
+.viewer-shell {
+  width: min(100% - clamp(1.25rem, 3vw, 3rem), 98rem);
+  padding-top: 1.5rem;
+}
+
 .page-header {
   margin-bottom: 2rem;
 }
@@ -359,21 +364,53 @@ button:focus-visible {
   align-items: start;
   display: grid;
   gap: 1rem;
-  grid-template-columns: minmax(0, 1.1fr) minmax(20rem, 0.9fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.35fr) minmax(0, 1fr);
 }
 
 .video-panel,
-.transcript-panel {
+.transcript-panel,
+.timeline-workspace {
   min-width: 0;
   padding: 1rem;
 }
 
+.video-panel {
+  position: sticky;
+  top: 1rem;
+}
+
+.timeline-workspace {
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #aab7cb #eef2f7;
+  position: sticky;
+  top: 1rem;
+}
+
+.video-job-summary {
+  border-top: 1px solid #edf0f5;
+  margin-top: 0.9rem;
+  padding-top: 0.8rem;
+}
+
+.video-job-summary .transcript-heading {
+  margin-bottom: 0;
+}
+
+.video-job-summary h2 {
+  font-size: 1rem;
+}
+
 .project-video {
   background: #101827;
+  aspect-ratio: 16 / 9;
   border-radius: 0.65rem;
   display: block;
-  max-height: 70vh;
   width: 100%;
+  object-fit: contain;
 }
 
 .video-caption {
@@ -393,7 +430,7 @@ button:focus-visible {
   background: #f7f9fd;
   border: 1px solid #e4eaf3;
   border-radius: 0.75rem;
-  margin: 0.8rem 0 1rem;
+  margin: 0 0 0.85rem;
   padding: 0.8rem;
 }
 
@@ -452,9 +489,50 @@ button:focus-visible {
   font-size: 0.82rem;
 }
 
+.normalization-action {
+  border-top: 1px solid #e4eaf3;
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+  padding-top: 0.75rem;
+}
+
+.normalization-action p,
+.normalization-results p {
+  color: #52605d;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.normalization-action button {
+  justify-self: start;
+  padding: 0.6rem 0.8rem;
+}
+
+.normalization-results {
+  border: 1px solid #dce5e2;
+  border-radius: 0.65rem;
+  margin: 0.8rem 0;
+  padding: 0.75rem;
+}
+
+.normalization-results h4 {
+  margin: 0 0 0.4rem;
+}
+
+.normalization-results ul {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
 .timeline-panel {
-  margin: 1rem 0;
-  padding: 1rem;
+  margin: 0;
+  padding: 0.9rem;
   border: 1px solid #dce5e2;
   border-radius: 0.75rem;
   background: #fbfdfc;
@@ -523,14 +601,91 @@ button:focus-visible {
 
 .timeline-issues,
 .timeline-operations,
-.optimization-results {
+.optimization-results,
+.timeline-conflict-list {
   margin-top: 0.85rem;
 }
 
 .timeline-issues h4,
 .timeline-operations h4,
-.optimization-results h4 {
+.optimization-results h4,
+.timeline-conflict-list h4 {
   margin: 0 0 0.35rem;
+}
+
+.timeline-workspace details > summary {
+  color: #34425d;
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 750;
+  padding: 0.35rem 0;
+}
+
+.timeline-workspace details > summary:focus-visible {
+  border-radius: 0.2rem;
+  outline: 3px solid rgb(53 89 216 / 28%);
+  outline-offset: 2px;
+}
+
+.timeline-conflict-list > p {
+  margin: 0.4rem 0 0.7rem;
+  color: #52605d;
+  font-size: 0.86rem;
+}
+
+.timeline-conflict-list ol {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding-left: 1.4rem;
+}
+
+.timeline-conflict-list li {
+  padding: 0.75rem;
+  border: 1px solid #e4eaf3;
+  border-radius: 0.65rem;
+  background: #fff;
+}
+
+.timeline-conflict-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.timeline-conflict-heading code {
+  color: #52605d;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.conflict-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.4rem 0.75rem;
+  margin: 0.6rem 0;
+}
+
+.conflict-details dt {
+  color: #66748c;
+  font-size: 0.75rem;
+}
+
+.conflict-details dd {
+  margin: 0.1rem 0 0;
+  font-weight: 650;
+}
+
+.conflict-translation {
+  margin: 0.55rem 0;
+  white-space: pre-wrap;
+}
+
+.conflict-reason {
+  margin: 0.45rem 0;
+  color: #7a3b15;
+  font-size: 0.84rem;
 }
 
 .timeline-issues ul,
@@ -603,9 +758,13 @@ button:focus-visible {
   gap: 0.55rem;
   list-style: none;
   margin: 0;
-  max-height: 70vh;
+  max-height: min(68vh, 56rem);
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 0;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #aab7cb #eef2f7;
 }
 
 .segment-row {
@@ -620,6 +779,11 @@ button:focus-visible {
 .segment-active {
   background: #f0f4ff;
   border-color: #8097ed;
+}
+
+.segment-focused {
+  box-shadow: 0 0 0 3px rgb(221 128 38 / 36%);
+  scroll-margin-block: 0.5rem;
 }
 
 .segment-seek {
@@ -697,9 +861,75 @@ button:focus-visible {
   background: #dfe6f0;
 }
 
+@media (min-width: 1440px) {
+  .viewer-header {
+    margin-bottom: 1.25rem;
+  }
+}
+
+@media (max-width: 1439px) {
+  .viewer-grid {
+    grid-template-columns: minmax(18rem, 0.9fr) minmax(0, 1.3fr);
+  }
+
+  .timeline-workspace {
+    grid-column: 1 / -1;
+    max-height: none;
+    overflow: visible;
+    position: static;
+  }
+
+  .timeline-panel {
+    display: grid;
+    gap: 0.25rem 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .timeline-action,
+  .timeline-summary,
+  .timeline-conflict-list,
+  .timeline-issues,
+  .timeline-operations,
+  .optimization-results,
+  .timeline-panel > .state-message,
+  .timeline-panel > .inline-error,
+  .timeline-panel > .timeline-clear,
+  .timeline-panel > .timeline-blocked,
+  .timeline-panel > .tts-start-button {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 900px) {
+  .viewer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .video-panel,
+  .timeline-workspace {
+    position: static;
+  }
+
+  .timeline-workspace {
+    grid-column: auto;
+  }
+
+  .timeline-panel {
+    display: block;
+  }
+
+  .segment-list {
+    max-height: 65vh;
+  }
+}
+
 @media (max-width: 620px) {
   .app-shell {
     padding-top: 2.5rem;
+  }
+
+  .viewer-shell {
+    padding-top: 1.5rem;
   }
 
   .form-grid,
@@ -727,11 +957,24 @@ button:focus-visible {
     align-self: start;
   }
 
-  .viewer-grid {
-    grid-template-columns: 1fr;
+  .video-panel,
+  .transcript-panel,
+  .timeline-workspace {
+    padding: 0.75rem;
   }
 
-  .segment-list {
-    max-height: none;
+  .timeline-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .timeline-action button {
+    align-self: flex-start;
+  }
+
+  .segment-row {
+    gap: 0.45rem;
+    grid-template-columns: 4.4rem minmax(0, 1fr);
+    padding: 0.55rem;
   }
 }

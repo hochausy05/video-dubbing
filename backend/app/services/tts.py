@@ -6,9 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
-import math
 import shutil
-import subprocess
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
@@ -26,6 +24,13 @@ from app.core.config import (
     get_edge_tts_voice,
 )
 from app.models import Artifact, Job, JobStatus, Project, Segment
+from app.services.audio_normalization import (
+    AudioNormalizationError,
+    measured_audio_duration_ms as measure_decoded_audio_duration_ms,
+    normalize_audio_file,
+    read_normalization_metadata,
+    write_normalization_metadata,
+)
 from app.services.uploads import resolve_storage_path
 from app.services.tts_readiness import validate_project_tts_readiness
 
@@ -34,7 +39,6 @@ logger = logging.getLogger("autodub.tts")
 MAX_ATTEMPTS = 3
 BASE_RETRY_DELAY_SECONDS = 0.5
 SYNTHESIS_TIMEOUT_SECONDS = 90
-FFPROBE_TIMEOUT_SECONDS = 30
 TTS_MEDIA_TYPE = "audio/mpeg"
 
 
@@ -88,35 +92,10 @@ def next_optimization_rate(current_rate_percent: int, maximum_rate_percent: int)
 
 def measured_audio_duration_ms(path: Path) -> int:
     """Ask FFprobe for real audio duration and reject missing/unusable output."""
-    if not path.is_file() or path.stat().st_size == 0:
-        raise TTSError("Edge-TTS did not produce usable audio for a Segment.")
-    command = [
-        "ffprobe", "-v", "error", "-select_streams", "a:0",
-        "-show_entries", "format=duration:stream=duration", "-of", "json", str(path),
-    ]
     try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=FFPROBE_TIMEOUT_SECONDS, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise TTSError("Generated Segment audio could not be measured.") from error
-    if result.returncode:
-        raise TTSError("Generated Segment audio is invalid or unreadable.")
-    try:
-        probe = json.loads(result.stdout)
-        raw_duration = probe.get("format", {}).get("duration")
-        if raw_duration in (None, ""):
-            raw_duration = next(stream["duration"] for stream in probe["streams"] if stream.get("duration"))
-        duration_seconds = float(raw_duration)
-    except (KeyError, TypeError, ValueError, StopIteration, json.JSONDecodeError) as error:
-        raise TTSError("Generated Segment audio has no valid duration.") from error
-    if not math.isfinite(duration_seconds) or duration_seconds <= 0:
-        raise TTSError("Generated Segment audio has no valid duration.")
-    duration_ms = round(duration_seconds * 1000)
-    if duration_ms <= 0:
-        raise TTSError("Generated Segment audio duration is below one millisecond.")
-    return duration_ms
+        return measure_decoded_audio_duration_ms(path)
+    except AudioNormalizationError as error:
+        raise TTSError(str(error)) from None
 
 
 def _is_transient(error: Exception) -> bool:
@@ -146,18 +125,36 @@ async def synthesize_segment(
         raise TTSError("Vietnamese translation must not be empty.")
     communicate_factory = communicate_factory or edge_tts.Communicate
     destination.parent.mkdir(parents=True, exist_ok=True)
+    raw_destination = destination.with_name(f"{destination.stem}.original.mp3")
+    metadata_path = destination.with_name(f"{destination.stem}.normalization.json")
     async with semaphore:
         for attempt in range(MAX_ATTEMPTS):
             destination.unlink(missing_ok=True)
+            raw_destination.unlink(missing_ok=True)
+            metadata_path.unlink(missing_ok=True)
             try:
                 communicate = communicate_factory(
                     text, voice, rate=f"+{rate_percent}%", connect_timeout=10,
                     receive_timeout=SYNTHESIS_TIMEOUT_SECONDS,
                 )
-                await asyncio.wait_for(communicate.save(str(destination)), timeout=SYNTHESIS_TIMEOUT_SECONDS)
+                await asyncio.wait_for(communicate.save(str(raw_destination)), timeout=SYNTHESIS_TIMEOUT_SECONDS)
+                original_duration_ms = measured_audio_duration_ms(raw_destination)
+                normalized = normalize_audio_file(raw_destination, destination)
+                metadata = normalized.as_metadata()
+                metadata.update({
+                    "voice": voice,
+                    "rate_percent": rate_percent,
+                    "translation_fingerprint": translation_fingerprint(text, voice, rate_percent),
+                    "original_file": raw_destination.name,
+                })
+                write_normalization_metadata(destination, metadata)
+                if normalized.original_duration_ms != original_duration_ms:
+                    raise TTSError("Generated Segment audio measurement changed during normalization.")
                 return measured_audio_duration_ms(destination)
             except Exception as error:
                 destination.unlink(missing_ok=True)
+                raw_destination.unlink(missing_ok=True)
+                metadata_path.unlink(missing_ok=True)
                 if not _is_transient(error) or attempt + 1 >= MAX_ATTEMPTS:
                     if isinstance(error, TTSError):
                         raise

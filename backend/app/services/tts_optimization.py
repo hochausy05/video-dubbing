@@ -7,7 +7,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 from uuid import UUID
 
@@ -28,6 +28,7 @@ from app.schemas.tts_optimization import (
     RemainingTTSConflict,
     TTSOptimizationResult,
 )
+from app.services.audio_normalization import read_normalization_metadata, write_normalization_metadata
 from app.services.tts import (
     TTS_MEDIA_TYPE,
     TTSError,
@@ -39,6 +40,7 @@ from app.services.tts import (
 )
 from app.services.tts_readiness import ProjectNotFoundError, validate_project_tts_readiness
 from app.services.tts_timeline import build_project_timeline_plan
+from app.services.uploads import UploadStorageError, resolve_storage_path
 
 
 logger = logging.getLogger("autodub.tts_optimization")
@@ -93,6 +95,18 @@ def enqueue_tts_optimization(
         for _segment_id, rate in current_rates
     ):
         raise ValueError("No faster TTS rate is available under the configured maximum.")
+    for artifact in session.scalars(select(Artifact).where(
+        Artifact.project_id == project_id,
+        Artifact.media_type == TTS_MEDIA_TYPE,
+        Artifact.is_current.is_(True),
+    )).all():
+        try:
+            audio_path = resolve_storage_path(PurePosixPath(artifact.storage_reference))
+        except (UploadStorageError, OSError, ValueError):
+            raise ValueError("Current TTS audio is unavailable for optimization.") from None
+        metadata = read_normalization_metadata(audio_path)
+        if metadata is None or metadata.get("final_duration_ms") != artifact.duration_ms:
+            raise ValueError("Normalize current TTS audio before optimizing its duration.")
     job = Job(
         project_id=project_id,
         operation_type="tts_optimize",
@@ -178,6 +192,11 @@ def optimize_project_tts(
             job.completed_at = session.scalar(select(func.now()))
             session.commit()
             return 0
+        for artifact in artifacts:
+            audio_path = resolve_storage_path(PurePosixPath(artifact.storage_reference))
+            metadata = read_normalization_metadata(audio_path)
+            if metadata is None or metadata.get("final_duration_ms") != artifact.duration_ms:
+                raise TTSError("Normalize current TTS audio before optimizing its duration.")
         if any(issue.code not in _OPTIMIZABLE_ISSUES for issue in original_plan.issues if issue.severity == "blocking"):
             raise TTSError("Current TTS inputs cannot be safely optimized.")
 
@@ -263,7 +282,15 @@ def optimize_project_tts(
             final_dir_created = True
             for segment_id, candidate in best.items():
                 assert candidate.path is not None
-                shutil.move(str(candidate.path), str(final_dir / f"{segment_id}.mp3"))
+                output_path = final_dir / f"{segment_id}.mp3"
+                metadata = read_normalization_metadata(candidate.path)
+                shutil.move(str(candidate.path), str(output_path))
+                original_path = candidate.path.with_name(f"{candidate.path.stem}.original.mp3")
+                if original_path.is_file():
+                    shutil.move(str(original_path), str(final_dir / f"{segment_id}.original.mp3"))
+                if metadata is not None:
+                    metadata["original_file"] = f"{segment_id}.original.mp3"
+                    write_normalization_metadata(output_path, metadata)
 
         with Session(engine) as session, session.begin():
             project = session.scalar(select(Project).where(Project.id == project_id).with_for_update())
@@ -353,9 +380,40 @@ def read_tts_optimization_result(
         return TTSOptimizationResult(
             job_id=job_id, project_id=project_id, status=job.status, stage=job.stage,
             error=job.safe_error, updated_segments=[], resolved_conflict_segment_ids=[],
-            remaining_conflicts=[], renderable=False, recommendation=None,
+            remaining_conflicts=[], renderable=False, stale=False, recommendation=None,
         )
     plan = build_project_timeline_plan(session, project_id)
+    newer_successful_job = session.scalar(select(Job.id).where(
+        Job.project_id == project_id,
+        Job.operation_type.in_(["tts", "tts_optimize", "tts_normalize"]),
+        Job.id != job_id,
+        Job.status == JobStatus.SUCCEEDED.value,
+        Job.created_at >= job.completed_at,
+    ).limit(1)) if job.completed_at is not None else None
+    stale = (
+        job.status == JobStatus.SUCCEEDED.value
+        and (
+            newer_successful_job is not None
+            or any(
+                issue.severity == "blocking" and issue.code not in _OPTIMIZABLE_ISSUES
+                for issue in plan.issues
+            )
+        )
+    )
+    if stale:
+        return TTSOptimizationResult(
+            job_id=job_id,
+            project_id=project_id,
+            status=job.status,
+            stage=job.stage,
+            error=job.safe_error,
+            updated_segments=[],
+            resolved_conflict_segment_ids=[],
+            remaining_conflicts=[],
+            renderable=False,
+            stale=True,
+            recommendation="This optimization result is stale because current Project inputs no longer match it. Analyze the current timeline before relying on optimization details.",
+        )
     remaining_ids = _blocking_ids(plan)
     updated_segments = [
         OptimizedSegmentRead(
@@ -391,5 +449,6 @@ def read_tts_optimization_result(
         resolved_conflict_segment_ids=resolved_ids,
         remaining_conflicts=remaining_conflicts,
         renderable=plan.renderable,
+        stale=False,
         recommendation=recommendation,
     )

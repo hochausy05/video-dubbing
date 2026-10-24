@@ -10,9 +10,9 @@
 ## Current Task
 
 - **Phase:** 7 — Edge-TTS and FFmpeg output
-- **Task:** `RENDER-01`
-- **Next after verified completion:** `RESULT-01`.
-- **Scope:** See the `RENDER-01` task entry below.
+- **Task:** `TIMELINE-01`
+- **Next after verified completion:** `UI-03` manual responsive acceptance remains pending.
+- **Scope:** See the `TIMELINE-01` task entry below.
 
 ## Phase 1 — Documents and environment
 
@@ -59,12 +59,15 @@
 - [x] `TTS-01` — Select a verified Vietnamese voice and generate valid per-segment audio without content loss. Evidence: on the real `demo2` Project, the user confirmed the TTS Job reached `succeeded`/`tts_ready`, readiness reported 11 Segments with 0 errors and 0 warnings, per-Segment Vietnamese audio played without truncation, adaptive `+20%` rate and measured durations displayed, results persisted after F5, and source timestamps/translations remained unchanged. Segment-level speech generation is complete; synchronization and video time-stretching remain future work.
 - [x] `TTS-02` — Analyze measured TTS durations and plan a deterministic output timeline with dynamic video stretch operations capped at 1.4×. Evidence: on the real `demo2` Project, the user confirmed the UI reports 21,339 ms source duration, 25,211 ms planned duration, 3,872 ms added duration, and 9 of 11 Segments requiring stretch; it displays 8 blocking timing conflicts and their Segment navigation, with consistent results after refresh. These are valid analysis findings; the plan is not renderable until conflicts are resolved. Source timestamps remain unchanged. Executing dynamic stretch, mixing, subtitle synchronization, and final rendering remain future work.
 - [x] `TTS-03` — Optimize measured Vietnamese TTS duration for planner-blocking Segments using bounded Edge-TTS rates up to +35%, preserve valid audio atomically, and report conflicts that remain. Evidence: on `demo2`, the user confirmed real Edge-TTS optimization improved 7 Segment audio files and resolved 2 of 8 blocking conflicts. The plan changed from 25,211 ms (+3,872 ms) to 25,011 ms (+3,672 ms); 6 conflicts remain with excess durations of 64, 536, 216, 232, 232, and 920 ms, and the Project correctly remains not renderable. The user listened to and accepted optimized voices, confirmed results/audio metadata/Job state persist after refresh, and verified translations, source timestamps, video preview, seeking, and editing remain intact. Timeline conflict resolution and video rendering remain future work.
+- [x] `TTS-04` — Normalize actual TTS media by conservatively trimming excessive trailing silence, preserving originals and publishing measured, provenance-checked Artifacts atomically; provide a tracked Job to normalize existing audio without Edge-TTS regeneration. Evidence: on `demo2`, the user confirmed the normalization Job reached `tts_normalization_complete`, processed 11 files, shortened 0 further files, and recovered 0 ms because the current media was already normalized. Repeated normalization preserved durations; Segment 10 remains 1,045 ms, reduced from 1,872 ms. Timeline analysis reports 2 blocking issues (Segment 3: 246 ms; Segment 10: 93 ms) and 23,730 ms planned output; the Project is not renderable. The user accepted the result. The Artifact-ID snapshot ordering fix is covered by regression tests, and the previous failed normalization Job published no Artifacts. Timeline conflict resolution and rendering remain future work.
+- [ ] `TIMELINE-01` — Guide users through resolving TTS timing conflicts by editing persisted Vietnamese translations, regenerating full-Project TTS safely, and recalculating the authoritative timeline plan. **Partial / Pending manual browser acceptance.** Edited translations invalidate old audio and timeline results, and optimization results are identified as stale after refresh; the existing planner remains authoritative for render readiness and unresolved conflicts continue to block rendering.
 - [ ] `RENDER-01` — Render dubbed MP4 and SRT with FFmpeg. Watch/listen to output and inspect timing, including overlong speech.
 - [ ] `RESULT-01` — Preview/download artifacts for the correct project and confirmed revision.
 - [ ] `FLOW-01` — Run the complete flow with permitted media and real integration evidence; mocks alone are insufficient.
 
 ## Phase 8 — QA, polish, and final report
 
+- [ ] `UI-03` — Redesign the Project Viewer as a responsive dubbing workspace with accessible transcript navigation and compact timeline controls. **Partial / Pending manual browser acceptance.** Frontend production build and `git diff --check` passed; manual checks at wide desktop, laptop, and mobile sizes remain required.
 - [ ] `QA-01` — Add unit/integration coverage for validation, state, segments, and provider failures.
 - [ ] `QA-02` — Test missing audio/speech, corrupt input, exhausted quota, TTS failure, and FFmpeg failure.
 - [ ] `QA-03` — Measure each stage on the selected demo machine/input and record limits without extrapolation.

@@ -10,6 +10,7 @@ from app.schemas.tts_optimization import (
     RemainingTTSConflict,
     TTSOptimizationResult,
 )
+from app.schemas.tts_normalization import TTSNormalizationResult, TTSNormalizedSegmentRead
 from app.schemas.timeline import (
     PlannedSegmentTiming,
     TimelinePlanningIssue,
@@ -29,6 +30,8 @@ __all__ = [
     "OptimizedSegmentRead",
     "RemainingTTSConflict",
     "TTSOptimizationResult",
+    "TTSNormalizationResult",
+    "TTSNormalizedSegmentRead",
     "PlannedSegmentTiming",
     "TimelinePlanningIssue",
     "TimelineStretchOperation",

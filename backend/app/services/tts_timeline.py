@@ -24,6 +24,7 @@ from app.schemas.timeline import (
     TTSTimelinePlan,
 )
 from app.services.tts import TTS_MEDIA_TYPE, adaptive_rate_percent, translation_fingerprint
+from app.services.audio_normalization import read_normalization_metadata
 from app.services.tts_readiness import ProjectNotFoundError, validate_project_tts_readiness
 from app.services.uploads import UploadStorageError, resolve_storage_path, source_relative_path
 
@@ -364,9 +365,9 @@ def build_project_timeline_plan(
         job = session.get(Job, artifact.job_id)
         if (
             job is None or job.project_id != project_id
-            or job.operation_type not in {"tts", "tts_optimize"}
+            or job.operation_type not in {"tts", "tts_optimize", "tts_normalize"}
             or job.status != JobStatus.SUCCEEDED.value
-            or job.stage not in {"tts_ready", "tts_optimization_complete"}
+            or job.stage not in {"tts_ready", "tts_optimization_complete", "tts_normalization_complete"}
             or job.input_revision != project.current_revision
         ):
             issues.append(_issue("tts_job_incomplete", "TTS Artifact must belong to a completed current-revision TTS Job.", segment.id))
@@ -376,11 +377,17 @@ def build_project_timeline_plan(
             issues.append(_issue("tts_artifact_path_invalid", "TTS Artifact storage association is invalid.", segment.id))
             continue
         try:
-            if not resolve_storage_path(PurePosixPath(expected_reference)).is_file():
+            audio_path = resolve_storage_path(PurePosixPath(expected_reference))
+            if not audio_path.is_file():
                 raise ValueError
         except (UploadStorageError, OSError, ValueError):
             issues.append(_issue("tts_audio_missing", "Generated audio file is unavailable for a Segment.", segment.id))
             continue
+        if job.operation_type == "tts_normalize":
+            metadata = read_normalization_metadata(audio_path)
+            if metadata is None or metadata.get("final_duration_ms") != artifact.duration_ms:
+                issues.append(_issue("tts_artifact_normalization_invalid", "Normalized TTS media metadata is unavailable or inconsistent.", segment.id))
+                continue
 
         if (
             configured_voice is None or not segment.translated_text

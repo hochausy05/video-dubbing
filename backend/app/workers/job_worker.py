@@ -20,6 +20,7 @@ from app.services.asr import transcribe_project
 from app.services.translation import translate_project
 from app.services.tts import generate_project_tts
 from app.services.tts_optimization import optimize_project_tts
+from app.services.tts_normalization import normalize_project_tts
 from app.services.tts import _safe_tts_dir
 
 
@@ -111,7 +112,7 @@ def cleanup_interrupted_tts_optimization_files(engine: Engine, job_ids: tuple[UU
     with Session(engine) as session:
         jobs = session.scalars(select(Job).where(
             Job.id.in_(job_ids),
-            Job.operation_type == "tts_optimize",
+            Job.operation_type.in_(["tts_optimize", "tts_normalize"]),
             Job.status == JobStatus.INTERRUPTED.value,
         )).all()
         cleanup_paths: list[tuple[UUID, UUID]] = []
@@ -211,7 +212,7 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
             if job.status != JobStatus.RUNNING.value:
                 raise JobTransitionError("The Job is no longer running.")
             operation_type = job.operation_type
-            if operation_type not in {"transcribe_translate", "tts", "tts_optimize"}:
+            if operation_type not in {"transcribe_translate", "tts", "tts_optimize", "tts_normalize"}:
                 raise JobTransitionError("This Job type is not implemented by the worker yet.")
             project_id = job.project_id
             input_revision = job.input_revision
@@ -240,6 +241,19 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
                 stage_callback=stage_callback,
             )
             logger.info("Job %s completed TTS optimization for %d Segments.", job_id, optimized_count)
+            return
+
+        if operation_type == "tts_normalize":
+            stage_callback = lambda stage: _set_running_job_stage(engine, job_id, stage)
+            stage_callback("preparing_tts_normalization")
+            normalized_count = normalize_project_tts(
+                engine,
+                project_id=project_id,
+                job_id=job_id,
+                input_revision=input_revision,
+                stage_callback=stage_callback,
+            )
+            logger.info("Job %s normalized %d Segment audio files.", job_id, normalized_count)
             return
 
         _set_running_job_stage(engine, job_id, "preparing_asr")

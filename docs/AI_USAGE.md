@@ -312,3 +312,57 @@
 - **Verification:** Recorded the manual results supplied by the user. Ran `git diff --check`; earlier automated results were not rerun.
 - **Result/limits:** TTS-03 is complete. Six conflicts remain (64, 536, 216, 232, 232, and 920 ms excess); no rendering readiness is claimed.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `TIMELINE-01` — Guided timeline conflict resolution
+
+- **AI assistance:** Inspected EDIT-02 and TTS-01/02/03 flows; extended the existing viewer with stable-ID conflict details, links into the existing translation editor, truthful stale timeline/audio messaging, and full-Project TTS regeneration guidance. Added focused tests for translation fingerprint invalidation and transactional full regeneration. Documented the workflow and render-readiness boundary.
+- **Developer decision:** Reuse the existing full TTS Job because current generation validates a complete transcript snapshot and publishes the complete Artifact set atomically. Do not attempt selective regeneration or automatic translation rewriting. Keep TIMELINE-01 partial until real browser acceptance.
+- **Affected areas:** `TASKS.md`, architecture notes, Project viewer UI/styles, TTS pipeline tests, and append-only task logs.
+- **Verification:** 72 backend unit tests, `npm run build`, backend `compileall`, `pip check`, `git diff --check`, and source secret/ignore checks passed. Automated tests used mocked synthesis; no real Edge-TTS request or browser flow was run.
+- **Result/limits:** The user must manually verify the guided workflow on `demo2`. No rendering, audio mixing, or subtitle generation was added.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TIMELINE-01` — Segment 10 duration investigation
+
+- **AI assistance:** Traced translation persistence, TTS enqueue/worker dispatch, Edge-TTS inputs, FFprobe measurement, Artifact publication/provenance, planner selection, API responses, and frontend rendering. Inspected the existing `demo2` Segment 10 Artifact and media read-only through SQLAlchemy, FFprobe/FFmpeg, and Supabase MCP. Added an end-to-end deterministic regression test for translation edit, stale Artifact rejection, full regeneration, current Artifact selection, and timeline recalculation.
+- **Developer decision:** Treat the identical 1,872 ms values as valid measurements because the old and current files are distinct and independently measure to 78 MP3 frames; keep +20% because both texts remain above the existing adaptive-rate threshold. Do not force duration changes or modify production code. Leave TIMELINE-01 partial pending browser acceptance.
+- **Affected areas:** `tests/unit/test_tts_pipeline.py` and append-only task audit records.
+- **Verification:** The user-provided current translation matched the current Artifact fingerprint; historical Artifact fingerprint matched the original text. SQLAlchemy and Supabase MCP agreed on current persisted metadata. `/tts-audio` and `/tts-timeline-plan` API calls returned the persisted 1,872 ms, +20%, 920 ms Segment 10 conflict. FFprobe measured old/current files; FFmpeg silence detection showed a longer low-amplitude tail in the current file, without evidence that the application inserts padding. 73 backend unit tests, frontend production build, `compileall`, `pip check`, and `git diff --check` passed. No real synthesis was triggered and no Project data was changed.
+- **Result/limits:** No production defect was confirmed. The unchanged total duration is consistent with the measured current media, though differing trailing low-amplitude regions merit a separate explicit product decision about silence trimming/measurement. Browser acceptance remains outstanding.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `UI-03` — Responsive Project workspace redesign
+
+- **AI assistance:** Reorganized the Project Viewer into video, transcript, and TTS/timeline panels; added responsive layouts, contained Segment-list scrolling, conflict-target highlighting/navigation, and collapsible timeline details.
+- **Developer decision:** Kept all existing API calls and TTS/timeline logic. Protected an unsaved translation draft when a user tries to open another Segment, and left UI-03 partial pending browser acceptance.
+- **Affected areas:** `frontend/src/App.tsx`, `frontend/src/index.css`, `TASKS.md`, and append-only task logs.
+- **Verification:** `npm run build` and `git diff --check` passed. No browser acceptance was performed.
+- **Result/limits:** Responsive behavior and preserved editing/playback/navigation workflows need manual checks at wide desktop, laptop, and mobile viewports. TIMELINE-01 remains pending its separate acceptance.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TTS-04` — Silence-aware TTS normalization
+
+- **AI assistance:** Implemented conservative decoded-signal tail-silence analysis with FFmpeg, media re-encoding and FFprobe verification, versioned provenance sidecars, normalization in standard TTS generation and optimization candidates, and a separate existing-audio normalization Job with atomic Artifact replacement. Added synthetic-media and API/worker persistence tests and documented the behavior.
+- **Developer decision:** Preserve raw Edge-TTS media, never adjust duration metadata without changing media, keep internal pauses, skip uncertain trims, preserve current voice/rate, and avoid running normalization against demo2 until browser/listening review. No schema or dependency changes.
+- **Affected areas:** TTS services, Project API and schemas, worker dispatch, timeline/optimization validation, Project Viewer, focused tests, task and architecture records.
+- **Verification:** 87 backend unit tests, frontend production build, backend `compileall`, `pip check`, and `git diff --check` passed. Tests use deterministic synthetic media and mocked provider calls; no real Project media was normalized.
+- **Result/limits:** TTS-04 remains partial pending user browser playback/listening and refreshed timeline acceptance on demo2. No Supabase data was changed, and no real-world duration/conflict reduction is claimed.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TTS-04` — demo2 normalization Job investigation
+
+- **AI assistance:** Compared read-only SQLAlchemy and Supabase rows, current Artifact provenance/sidecar measurements, and the live timeline API. Traced a failed normalization Job to an order-sensitive snapshot comparison; changed both snapshots to compare by Artifact ID, added reversed-UUID worker integration coverage, and clarified the UI distinction between a failed Job and a timeline based on current published media.
+- **Developer decision:** Preserve the current demo2 Artifact generation, media, and rates; do not rerun Edge-TTS or normalization against real data. Keep TTS-04 partial pending browser playback and listening acceptance.
+- **Affected areas:** Normalization worker service, worker integration tests, Project Viewer messaging, and architecture/task audit records.
+- **Verification:** SQLAlchemy and Supabase MCP agree that the failed normalization Job published zero Artifacts and the successful TTS generation owns all 11 current Artifacts. The live read-only timeline API returned 23,730 ms and two blockers. Five focused normalization tests passed, including the new ordering regression. No demo2 rows/files were modified.
+- **Result/limits:** A code ordering defect explains the false stale failure. Real browser acceptance/listening remains pending; the Project is not renderable.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TTS-04` — Manual acceptance close-out
+
+- **AI assistance:** Updated the task status and append-only project audit records from the user's manual browser acceptance results. Kept the remaining timeline blockers explicitly unresolved.
+- **Developer decision:** Mark TTS-04 complete after acceptance of the repeated normalization result; keep TIMELINE-01 partial because the current plan still has two blocking conflicts. Do not alter application logic or demo2 data.
+- **Affected areas:** `TASKS.md`, `docs/CHANGELOG.md`, and this audit log.
+- **Verification:** User confirmed the normalization Job reached `tts_normalization_complete`, processed 11 files with 0 additional files shortened and 0 ms additional duration recovered, preserved durations on repeat, and accepted the result. Segment 10 is 1,045 ms versus 1,872 ms originally. Timeline reports 23,730 ms output and two blockers (Segment 3: 246 ms; Segment 10: 93 ms). The prior 88-test backend suite, frontend build, `compileall`, `pip check`, and `git diff --check` had passed; only `git diff --check` was rerun for this documentation close-out.
+- **Result/limits:** TTS-04 is complete. Timeline blockers remain; no render-ready status is claimed. No application code or Project data was changed.
+- **Commit/issue:** None recorded by the AI assistant.
