@@ -138,6 +138,18 @@ type TTSNormalizationResult = {
   }[];
 };
 
+type RenderArtifact = {
+  id: string;
+  project_id: string;
+  job_id: string;
+  planned_duration_ms: number;
+  duration_ms: number;
+  created_at: string;
+  preview_url: string;
+  download_url: string;
+  current: boolean;
+};
+
 type ApiError = {
   detail?: string;
 };
@@ -228,6 +240,8 @@ function App() {
   const [optimizationError, setOptimizationError] = useState<string | null>(null);
   const [normalizationResult, setNormalizationResult] = useState<TTSNormalizationResult | null>(null);
   const [normalizationError, setNormalizationError] = useState<string | null>(null);
+  const [renderArtifact, setRenderArtifact] = useState<RenderArtifact | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   async function loadProjectJobs(projectList: Project[]) {
     await Promise.all(projectList.map(async (project) => {
@@ -308,6 +322,8 @@ function App() {
     setOptimizationError(null);
     setNormalizationResult(null);
     setNormalizationError(null);
+    setRenderArtifact(null);
+    setRenderError(null);
     if (updateUrl) {
       window.history.pushState({}, "", `?project=${encodeURIComponent(project.id)}`);
     }
@@ -321,6 +337,22 @@ function App() {
       setSegmentsLoading(false);
     }
     await loadProjectTtsAudio(project.id);
+    await loadCurrentRender(project.id);
+  }
+
+  async function loadCurrentRender(projectId: string) {
+    setRenderError(null);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/rendered-video`);
+      if (response.status === 404) {
+        setRenderArtifact(null);
+        return;
+      }
+      if (!response.ok) throw new Error(await readError(response));
+      setRenderArtifact((await response.json()) as RenderArtifact);
+    } catch (loadError) {
+      setRenderError(loadError instanceof Error ? loadError.message : "Unable to load the rendered video.");
+    }
   }
 
   async function loadProjectTtsAudio(projectId: string) {
@@ -472,6 +504,8 @@ function App() {
       setTimelinePlan(null);
       setTimelineError(null);
       setTimelineNotice("Translation saved. Existing audio for this Segment may now be outdated. Regenerate full-Project TTS, then analyze the timeline again.");
+      setRenderArtifact(null);
+      setRenderError(null);
       setOptimizationResult(null);
       setOptimizationError(null);
       setTtsReadiness(null);
@@ -528,10 +562,22 @@ function App() {
             setTimelineNotice("Full-Project TTS generation completed. Analyze the timeline again to verify the newly measured audio. Previous optimized speaking rates were reset to the standard adaptive rates; run duration optimization again if needed.");
             void loadProjectTtsAudio(projectId);
           }
+          if (["tts", "tts_optimize", "tts_normalize"].includes(persistedJob.job_type ?? "") && persistedJob.status === "succeeded") {
+            setRenderArtifact(null);
+            void loadCurrentRender(projectId);
+          }
           if (persistedJob.job_type === "tts" && ["failed", "interrupted"].includes(persistedJob.status)) {
             setTimelinePlan(null);
             setTimelineNotice("TTS regeneration did not complete. Previously published audio was preserved; analyze the timeline to check whether it still matches the saved translations.");
             void loadProjectTtsAudio(projectId);
+          }
+          if (persistedJob.job_type === "render") {
+            if (persistedJob.status === "succeeded") {
+              setRenderError(null);
+              void loadCurrentRender(projectId);
+            } else if (persistedJob.status === "failed" || persistedJob.status === "interrupted") {
+              setRenderError(persistedJob.error || "Video rendering did not complete.");
+            }
           }
         } catch (pollError) {
           setJobErrorsByProject((current) => ({
@@ -724,6 +770,26 @@ function App() {
     }
   }
 
+  async function startRender(project: Project) {
+    if (!timelinePlan?.renderable || timelinePlan.blocking_issue_count !== 0 || enqueueingProjects[project.id]) return;
+    setEnqueueingProjects((current) => ({ ...current, [project.id]: true }));
+    setEnqueueErrorsByProject((current) => ({ ...current, [project.id]: "" }));
+    setRenderError(null);
+    try {
+      const response = await fetch(`/api/projects/${project.id}/render-jobs`, { method: "POST" });
+      if (!response.ok) throw new Error(await readError(response));
+      const created = (await response.json()) as JobState;
+      setJobsByProject((current) => ({ ...current, [project.id]: { ...created, job_type: "render" } }));
+    } catch (enqueueError) {
+      setEnqueueErrorsByProject((current) => ({
+        ...current,
+        [project.id]: enqueueError instanceof Error ? enqueueError.message : "Unable to start video rendering.",
+      }));
+    } finally {
+      setEnqueueingProjects((current) => ({ ...current, [project.id]: false }));
+    }
+  }
+
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const selectedFile = event.target.files?.[0] ?? null;
     setFile(selectedFile);
@@ -795,6 +861,7 @@ function App() {
     const optimizationJob = job?.job_type === "tts_optimize";
     const hasTtsAudio = Object.keys(ttsAudioBySegment).length > 0;
     const normalizationJob = job?.job_type === "tts_normalize";
+    const renderJob = job?.job_type === "render";
     const timelineAvailable = (job?.job_type === "tts" && job.stage === "tts_ready") || optimizationJob || normalizationJob || hasTtsAudio;
     const canAnalyzeTimeline = job?.status !== "queued" && job?.status !== "running";
     const canNormalizeAudio = segments.length > 0 && segments.every((segment) => ttsAudioBySegment[segment.id]?.current)
@@ -824,6 +891,13 @@ function App() {
                 onError={() => setVideoError(true)} />
             )}
             <p className="video-caption">Original uploaded video</p>
+            {renderArtifact && <section className="render-result card" aria-label="Rendered dubbed video">
+              <h2>Rendered dubbed video</h2>
+              <p>Verified duration: {formatTimestamp(renderArtifact.duration_ms / 1000)} · Planned duration: {formatTimestamp(renderArtifact.planned_duration_ms / 1000)}</p>
+              <video className="project-video" controls preload="metadata" src={renderArtifact.preview_url} />
+              <a className="download-render" href={renderArtifact.download_url}>Download MP4</a>
+            </section>}
+            {renderError && <p className="inline-error" role="alert">{renderError}</p>}
             {job && <div className="video-job-summary">
               <div className="transcript-heading">
                 <h2>Project job</h2>
@@ -831,7 +905,8 @@ function App() {
               </div>
               {job.stage && <p className="job-stage">Stage: {job.stage}</p>}
               {(job.status === "failed" || job.status === "interrupted") && job.error && <p className="job-error">{job.error}</p>}
-              {(job.status === "queued" || job.status === "running") && job.job_type !== "tts_optimize" && <p className="job-stage">Transcript processing is {job.status}.</p>}
+              {(job.status === "queued" || job.status === "running") && renderJob && <p className="job-stage">Video rendering is {job.status}.</p>}
+              {(job.status === "queued" || job.status === "running") && !["tts_optimize", "tts_normalize", "render"].includes(job.job_type ?? "") && <p className="job-stage">Transcript processing is {job.status}.</p>}
             </div>}
           </div>
           <section className="transcript-panel card" aria-labelledby="transcript-heading">
@@ -1006,6 +1081,16 @@ function App() {
                   <div><dt>Additional duration</dt><dd>{formatTimestamp(timelinePlan.total_added_duration_ms / 1000)}</dd></div>
                   <div><dt>Segments to stretch</dt><dd>{timelinePlan.stretch_segment_count} / {timelinePlan.segment_count}</dd></div>
                 </dl>
+                {timelinePlan.renderable && <div className="render-action card">
+                  <p>Rendering uses the current validated timeline plan and published TTS audio. It does not synthesize or change audio.</p>
+                  <p>Expected output: {timelinePlan.planned_output_video_duration_ms === null ? "Unavailable" : formatTimestamp(timelinePlan.planned_output_video_duration_ms / 1000)} · {timelinePlan.stretch_operations.length} video stretch operation(s)</p>
+                  <button type="button" className="tts-start-button" onClick={() => void startRender(selectedProject)}
+                    disabled={enqueueingProjects[selectedProject.id] || job?.status === "queued" || job?.status === "running"}>
+                    {renderJob && (job.status === "queued" || job.status === "running") ? "Rendering dubbed video…" : enqueueingProjects[selectedProject.id] ? "Queuing render…" : "Render dubbed video"}
+                  </button>
+                </div>}
+                {!timelinePlan.renderable && <p className="state-message">Rendering is unavailable while the current plan has {timelinePlan.blocking_issue_count} blocking issue(s).</p>}
+                {enqueueErrorsByProject[selectedProject.id] && <p className="inline-error" role="alert">{enqueueErrorsByProject[selectedProject.id]}</p>}
                 {timelineConflictIssues.length > 0 && <div className="timeline-conflict-list">
                   <h4>Resolve timing conflicts</h4>
                   <p>Shortening unnecessary words may help the generated audio fit. Any word-count or duration guess cannot guarantee a fit; measured TTS duration is authoritative. Your saved translation is never rewritten automatically.</p>

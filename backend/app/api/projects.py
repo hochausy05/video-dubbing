@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
@@ -26,6 +26,7 @@ from app.schemas import (
     TTSTimelinePlan,
     TTSOptimizationResult,
     TTSNormalizationResult,
+    RenderArtifactRead,
 )
 from app.services.uploads import (
     UploadStorageError,
@@ -44,9 +45,76 @@ from app.services.audio_normalization import read_normalization_metadata
 from app.services.tts_timeline import build_project_timeline_plan
 from app.services.tts_optimization import enqueue_tts_optimization, read_tts_optimization_result
 from app.services.tts_normalization import enqueue_tts_normalization, read_tts_normalization_result
+from app.services.video_render import RenderError, enqueue_render_job, get_current_render
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+@router.post(
+    "/{project_id}/render-jobs",
+    response_model=JobCreated,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def enqueue_project_render(project_id: uuid.UUID) -> JobCreated:
+    """Queue rendering from the server-built current timeline plan."""
+    engine = create_database_engine()
+    try:
+        sessions = create_session_factory(engine)
+        with sessions() as session, session.begin():
+            try:
+                return enqueue_render_job(session, project_id)
+            except ProjectNotFoundError:
+                raise HTTPException(status_code=404, detail="Project not found.") from None
+            except RenderError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from None
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to enqueue Project rendering.") from error
+    finally:
+        engine.dispose()
+
+
+def _current_render_response(project_id: uuid.UUID) -> tuple[RenderArtifactRead, Path]:
+    engine = create_database_engine()
+    try:
+        sessions = create_session_factory(engine)
+        with sessions() as session:
+            try:
+                return get_current_render(session, project_id)
+            except ProjectNotFoundError:
+                raise HTTPException(status_code=404, detail="Project not found.") from None
+            except LookupError:
+                raise HTTPException(status_code=404, detail="Current rendered video is not available.") from None
+            except RenderError:
+                raise HTTPException(status_code=404, detail="Current rendered video is not available.") from None
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="Unable to read rendered video metadata.") from error
+    finally:
+        engine.dispose()
+
+
+@router.get("/{project_id}/rendered-video", response_model=RenderArtifactRead)
+def get_project_rendered_video(project_id: uuid.UUID) -> RenderArtifactRead:
+    metadata, _path = _current_render_response(project_id)
+    return metadata
+
+
+@router.get("/{project_id}/rendered-video/preview")
+def preview_project_rendered_video(project_id: uuid.UUID) -> FileResponse:
+    _metadata, path = _current_render_response(project_id)
+    return FileResponse(
+        path, media_type="video/mp4", filename="dubbed-video.mp4",
+        content_disposition_type="inline",
+    )
+
+
+@router.get("/{project_id}/rendered-video/download")
+def download_project_rendered_video(project_id: uuid.UUID) -> FileResponse:
+    _metadata, path = _current_render_response(project_id)
+    return FileResponse(
+        path, media_type="video/mp4", filename="dubbed-video.mp4",
+        content_disposition_type="attachment",
+    )
 
 
 @router.get("/{project_id}/tts-readiness", response_model=TTSReadiness)

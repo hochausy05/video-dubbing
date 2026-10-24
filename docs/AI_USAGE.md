@@ -366,3 +366,21 @@
 - **Verification:** User confirmed the normalization Job reached `tts_normalization_complete`, processed 11 files with 0 additional files shortened and 0 ms additional duration recovered, preserved durations on repeat, and accepted the result. Segment 10 is 1,045 ms versus 1,872 ms originally. Timeline reports 23,730 ms output and two blockers (Segment 3: 246 ms; Segment 10: 93 ms). The prior 88-test backend suite, frontend build, `compileall`, `pip check`, and `git diff --check` had passed; only `git diff --check` was rerun for this documentation close-out.
 - **Result/limits:** TTS-04 is complete. Timeline blockers remain; no render-ready status is claimed. No application code or Project data was changed.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `RENDER-01` — Timeline-based MP4 rendering
+
+- **AI assistance:** Implemented a tracked render Job using the existing worker, TTS timeline planner, Artifact model, controlled storage and Project Viewer. Added filtergraph construction for complete source interval partitions, planner-derived video/audio stretch and dubbing placement, H.264/AAC verification, input fingerprints, atomic publication, current-render APIs and UI recovery. Added synthetic FFmpeg/SQLite/API regression coverage and updated architecture/environment/task logs.
+- **Developer decision:** Keep the existing timeline planner authoritative, use CPU `libx264`, preserve the current render Artifact on failures, reject stale inputs, and keep RENDER-01 partial pending browser acceptance. Do not render or modify `demo2`; keep TIMELINE-01 partial.
+- **Affected areas:** Render service, Project API, existing worker and Job retry boundary, typed render schema, Project Viewer, environment sample, focused tests and task/architecture/environment audit records.
+- **Verification:** 16 focused render tests and 104 backend unit tests passed, with real FFmpeg/FFprobe on synthetic media; `npm run build`, Python `compileall`, `pip check`, `git diff --check`, and ignored-secret checks passed. No Supabase schema migration, real Project rendering, Edge-TTS synthesis, or demo2 data change was performed.
+- **Result/limits:** Synthetic API/worker publication, mixed streams, timestamp placement, stale-data rollback, previous Artifact preservation, MP4 Range preview/download, and persistence after a fresh SQLite engine are verified. Real Project browser playback/listening/timing/download/refresh acceptance remains pending.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TIMELINE-01` and `RENDER-01` — demo2 manual acceptance close-out
+
+- **AI assistance:** Updated task statuses and append-only audit records from the user's confirmed browser acceptance. Reconciled the architecture's previous pending-acceptance statement with the newly reported real Project result.
+- **Developer decision:** Mark TIMELINE-01 and RENDER-01 complete; preserve the already completed TTS-04 status and leave unrelated task statuses unchanged. Do not alter application logic or demo2 data, and do not rerun tests or rendering.
+- **Affected areas:** `TASKS.md`, the RENDER-01 acceptance paragraph in `docs/ARCHITECTURE.md`, and append-only task logs.
+- **Verification:** User confirmed on `demo2` that the timeline planner reported zero blockers and ready-to-render; the render Job completed at `render_complete`; preview and download were available; planned and verified output durations were both 23,681 ms; the plan had 11 TTS Segments and 7 stretch operations. `git diff --check` was run for this close-out. No additional tests were run.
+- **Result/limits:** TIMELINE-01 and RENDER-01 are complete based on user-confirmed browser acceptance. No new playback/listening detail beyond the user's report is claimed. No Project rows or media were changed.
+- **Commit/issue:** None recorded by the AI assistant.

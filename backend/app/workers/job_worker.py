@@ -22,6 +22,7 @@ from app.services.tts import generate_project_tts
 from app.services.tts_optimization import optimize_project_tts
 from app.services.tts_normalization import normalize_project_tts
 from app.services.tts import _safe_tts_dir
+from app.services.video_render import render_project, _safe_render_dir
 
 
 logger = logging.getLogger("autodub.worker")
@@ -125,6 +126,25 @@ def cleanup_interrupted_tts_optimization_files(engine: Engine, job_ids: tuple[UU
             shutil.rmtree(_safe_tts_dir(project_id, job_id, temporary=temporary), ignore_errors=True)
 
 
+def cleanup_interrupted_render_files(engine: Engine, job_ids: tuple[UUID, ...]) -> None:
+    """Remove private render files for interrupted Jobs with no published Artifact."""
+    if not job_ids:
+        return
+    with Session(engine) as session:
+        jobs = session.scalars(select(Job).where(
+            Job.id.in_(job_ids), Job.operation_type == "render",
+            Job.status == JobStatus.INTERRUPTED.value,
+        )).all()
+        cleanup_paths = [
+            (job.project_id, job.id)
+            for job in jobs
+            if session.scalar(select(Artifact.id).where(Artifact.job_id == job.id).limit(1)) is None
+        ]
+    for project_id, job_id in cleanup_paths:
+        for temporary in (True, False):
+            shutil.rmtree(_safe_render_dir(project_id, job_id, temporary=temporary), ignore_errors=True)
+
+
 def safe_error_summary(message: str) -> str:
     """Bound and redact a one-line error summary before persisting it."""
     first_line = (message or "").strip().splitlines()[0:1]
@@ -212,7 +232,7 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
             if job.status != JobStatus.RUNNING.value:
                 raise JobTransitionError("The Job is no longer running.")
             operation_type = job.operation_type
-            if operation_type not in {"transcribe_translate", "tts", "tts_optimize", "tts_normalize"}:
+            if operation_type not in {"transcribe_translate", "tts", "tts_optimize", "tts_normalize", "render"}:
                 raise JobTransitionError("This Job type is not implemented by the worker yet.")
             project_id = job.project_id
             input_revision = job.input_revision
@@ -254,6 +274,19 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
                 stage_callback=stage_callback,
             )
             logger.info("Job %s normalized %d Segment audio files.", job_id, normalized_count)
+            return
+
+        if operation_type == "render":
+            stage_callback = lambda stage: _set_running_job_stage(engine, job_id, stage)
+            stage_callback("validating_timeline")
+            duration_ms = render_project(
+                engine,
+                project_id=project_id,
+                job_id=job_id,
+                input_revision=input_revision,
+                stage_callback=stage_callback,
+            )
+            logger.info("Job %s published rendered MP4 with duration %d ms.", job_id, duration_ms)
             return
 
         _set_running_job_stage(engine, job_id, "preparing_asr")
@@ -318,6 +351,7 @@ def run_worker(*, poll_interval: float, once: bool = False) -> None:
         recovered_job_ids = recover_abandoned_jobs(engine)
         if recovered_job_ids:
             cleanup_interrupted_tts_optimization_files(engine, recovered_job_ids)
+            cleanup_interrupted_render_files(engine, recovered_job_ids)
             logger.info("Marked %d abandoned job(s) interrupted.", len(recovered_job_ids))
 
         while True:

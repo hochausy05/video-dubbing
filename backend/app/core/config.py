@@ -19,12 +19,14 @@ EDGE_TTS_VOICE_ENV = "EDGE_TTS_VOICE"
 EDGE_TTS_CONCURRENCY_ENV = "EDGE_TTS_CONCURRENCY"
 TTS_OPTIMIZATION_MAX_RATE_ENV = "TTS_OPTIMIZATION_MAX_RATE_PERCENT"
 TTS_OPTIMIZATION_MAX_ATTEMPTS_ENV = "TTS_OPTIMIZATION_MAX_ATTEMPTS"
+RENDER_ORIGINAL_AUDIO_GAIN_ENV = "RENDER_ORIGINAL_AUDIO_GAIN"
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 DEFAULT_EDGE_TTS_VOICE = "vi-VN-HoaiMyNeural"
 DEFAULT_TRANSLATION_BATCH_SIZE = 40
 DEFAULT_EDGE_TTS_CONCURRENCY = 5
 DEFAULT_TTS_OPTIMIZATION_MAX_RATE_PERCENT = 35
 DEFAULT_TTS_OPTIMIZATION_MAX_ATTEMPTS = 4
+DEFAULT_RENDER_ORIGINAL_AUDIO_GAIN = 0.10
 MAX_TRANSLATION_TEXT_CHARACTERS = 10_000
 MAX_UPLOAD_SIZE_BYTES = 104_857_600
 MAX_VIDEO_DURATION_SECONDS = 1_800
@@ -161,4 +163,19 @@ def get_tts_optimization_max_attempts() -> int:
     )
     if value > 4:
         raise RuntimeError(f"{TTS_OPTIMIZATION_MAX_ATTEMPTS_ENV} must be between 1 and 4.")
+    return value
+
+
+def get_render_original_audio_gain() -> float:
+    """Return the bounded background-audio level used beneath Vietnamese dubbing."""
+    load_local_environment()
+    configured_value = os.getenv(RENDER_ORIGINAL_AUDIO_GAIN_ENV)
+    if configured_value is None:
+        return DEFAULT_RENDER_ORIGINAL_AUDIO_GAIN
+    try:
+        value = float(configured_value)
+    except ValueError as error:
+        raise RuntimeError(f"{RENDER_ORIGINAL_AUDIO_GAIN_ENV} must be between 0 and 1.") from error
+    if not 0 <= value <= 1:
+        raise RuntimeError(f"{RENDER_ORIGINAL_AUDIO_GAIN_ENV} must be between 0 and 1.")
     return value

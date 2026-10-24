@@ -359,3 +359,19 @@
 - **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Người dùng xác nhận kết quả trong browser và chấp nhận audio đã chuẩn hóa. Timeline còn 2 blocker: Segment 3 vượt 246 ms, Segment 10 vượt 93 ms; planned output 23.730 ms, do đó không tuyên bố Project renderable. Bộ kiểm thử backend 88 test, frontend production build, `compileall`, `pip check` và `git diff --check` đã đạt trong lần xác minh trước.
 - **Còn lại:** Xung đột timeline và render video vẫn là công việc riêng; TIMELINE-01 giữ trạng thái Một phần.
+
+## 2026-10-25 — RENDER-01: Render MP4 theo timeline TTS
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm Job `render` chạy FFmpeg trong worker tuần tự; chỉ nhận timeline được planner hiện hành xác nhận, đồng bộ stretch video/audio, trộn TTS đã publish, kiểm tra H.264/AAC và thời lượng rồi publish Artifact MP4 theo giao dịch có kiểm tra provenance. Thêm API enqueue/metadata/preview/download, hỗ trợ HTTP Range, cùng viewer action và phát/tải output hiện hành. Không thêm schema hoặc dependency; encoding dùng libx264 CPU và gain audio nền mặc định 0,10.
+- **Tệp:** `.env.example`, `TASKS.md`, `backend/app/api/jobs.py`, `backend/app/api/projects.py`, `backend/app/core/config.py`, `backend/app/schemas/__init__.py`, `backend/app/schemas/render.py`, `backend/app/services/video_render.py`, `backend/app/workers/job_worker.py`, `docs/ARCHITECTURE.md`, `docs/ENVIRONMENT.md`, `frontend/src/App.tsx`, `frontend/src/index.css`, `tests/unit/test_video_render.py`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 16 kiểm thử render tổng hợp và toàn bộ 104 backend unit test đạt; kiểm thử dùng FFmpeg/FFprobe thật với media tổng hợp, SQLite, worker service/API, stale-input rollback, Artifact preservation, Range preview/download và reconnect DB. `npm run build`, `compileall`, `pip check`, `git diff --check` và kiểm tra ignore đạt; quét secret không tìm thấy credential thật, chỉ nhận diện giá trị mẫu trong `.env.example`; `.env` bị ignore và không được track. Không render hoặc sửa dữ liệu/media `demo2`.
+- **Còn lại:** RENDER-01 vẫn một phần cho tới khi nghiệm thu browser trên Project thật: render, phát/nghe MP4, kiểm tra đồng bộ audio/video và Segment, tải xuống, tải lại trang để xác nhận Artifact. TIMELINE-01 vẫn một phần; không xác nhận demo2 renderable hoặc hoàn tất.
+
+## 2026-10-25 — TIMELINE-01 / RENDER-01: Nghiệm thu timeline và render trên demo2
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đóng TIMELINE-01 và RENDER-01 sau khi người dùng xác nhận nghiệm thu browser trên `demo2`. Timeline planner hiện hành báo Project sẵn sàng render với 0 blocker. Render Job đạt `render_complete`; MP4 preview và download xuất hiện trong Project Viewer. Planned duration và verified output duration đều 23.681 ms; kế hoạch có 11 TTS Segment và 7 stretch operation.
+- **Tệp:** `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Người dùng xác nhận browser acceptance thành công và các kết quả nêu trên. `git diff --check` đạt. Không chạy thêm test, không sửa dữ liệu `demo2`, không tái tạo audio/video. TTS-04 đã hoàn thành từ trước và giữ nguyên trạng thái.
+- **Còn lại:** Không cho TIMELINE-01 và RENDER-01. Các kiểm tra thủ công được ghi nhận theo xác nhận của người dùng; không thực hiện thêm kiểm thử trong lần đóng task này.

@@ -4,6 +4,7 @@ from app.schemas.jobs import JobCreated
 from app.schemas.jobs import JobDetail
 from app.schemas.projects import ProjectListItem, SegmentRead, SegmentTranslationUpdate
 from app.schemas.readiness import ReadinessIssue, TTSReadiness
+from app.schemas.render import RenderArtifactRead
 from app.schemas.tts import TTSArtifactRead
 from app.schemas.tts_optimization import (
     OptimizedSegmentRead,
@@ -26,6 +27,7 @@ __all__ = [
     "SegmentTranslationUpdate",
     "ReadinessIssue",
     "TTSReadiness",
+    "RenderArtifactRead",
     "TTSArtifactRead",
     "OptimizedSegmentRead",
     "RemainingTTSConflict",

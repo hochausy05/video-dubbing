@@ -419,6 +419,42 @@ button:focus-visible {
   margin: 0.65rem 0 0;
 }
 
+.render-result {
+  margin-top: 1rem;
+  padding: 0.8rem;
+}
+
+.render-result h2 {
+  font-size: 1.05rem;
+}
+
+.render-result p,
+.render-action p {
+  color: #53627a;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.download-render {
+  display: inline-flex;
+  margin-top: 0.65rem;
+  color: #17614e;
+  font-weight: 700;
+}
+
+.render-action {
+  margin: 0.9rem 0;
+  padding: 0.8rem;
+}
+
+.render-action p:first-child {
+  margin-top: 0;
+}
+
+.render-action p:last-of-type {
+  margin-bottom: 0.75rem;
+}
+
 .transcript-heading {
   align-items: center;
   display: flex;
