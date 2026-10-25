@@ -402,3 +402,21 @@
 - **Verification:** User confirmed the resulting mix was satisfactory with 0.35 background gain, 0.08 ducked gain, 1.0 Vietnamese TTS gain, 80 ms attack, 250 ms release, and 350 ms short-gap bridging. Prior reported checks: 115 backend unit tests, frontend build, `compileall`, `pip check`, `git diff --check`, and successful Supabase migration. No additional checks were run for this close-out.
 - **Result/limits:** AUDIO-01 is complete based on the user's real-world listening acceptance. No further measurements or test results are claimed.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `LEGACY-01` — Legacy desktop parity audit
+
+- **AI assistance:** Compared the four available desktop modules with current AutoDub translation, ASR, TTS, timeline, and render services; documented source references, parity classifications, unsafe legacy behaviors, current safeguards, and an evidence-based TRANS-03 implementation checklist. Updated the task pointer and roadmap priority without changing application code or existing task evidence.
+- **Developer decision:** Treat desktop source as the required reference before pipeline algorithm changes. Keep the strict UUID mapping, no-fallback behavior, bounded TRANS-02 retry policy, transactional persistence, measured media provenance, and authoritative timeline blockers. Mark LEGACY-01 complete for static source availability and comparison only; do not claim runtime parity. Project currently has no genre field, so no schema change was proposed.
+- **Affected areas:** `docs/LEGACY_PARITY_AUDIT.md`, `PLAN.md`, `TASKS.md`, and append-only audit logs.
+- **Verification:** Confirmed all four original modules exist in the neighboring reference directory, inspected current implementation and Project fields, and ran `git diff --check` successfully. No runtime tests, provider requests, media processing, database/project access, or demo data changes were performed.
+- **Result/limits:** Source-level findings are recorded. TRANS-03 is the next task; model limits, context-window size, translation quality, runtime parity, and any initial TTS rate-policy change remain unverified.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TRANS-03` — Legacy-informed Bulk-First contextual translation
+
+- **AI assistance:** Implemented full-transcript-first request planning with bounded input/output budgets, deterministic ordered fallback batches, adjacent context-only rows, timeline-aware prompt context, strict target-ID output validation, safe request metrics, and provider SDK retry/timeout configuration. Expanded deterministic translation tests and updated the source audit, architecture, task status, and append-only logs.
+- **Developer decision:** Reuse the legacy bulk/context/localization intent selectively, but retain stable UUIDs, exact persisted timestamps, no source-text fallback, strict complete mappings, atomic all-or-nothing persistence, and TRANS-02 classification. No genre field exists, so none was invented. Disable Google SDK automatic retries and keep the application retry policy authoritative. Do not call Gemini or claim translation-quality improvement; reserve real-output comparison for TRANS-04 with explicit approval.
+- **Affected areas:** Translation service/configuration, `.env.example`, focused translation tests, legacy parity audit, architecture and task/audit records.
+- **Verification:** 16 focused translation unit tests passed using mocked Gemini responses; the 267-Segment case persisted one complete set from one mocked request under explicit budgets. Python `compileall`, `pip check`, and `git diff --check` passed. No real Gemini request, Supabase access, Project/media mutation, or frontend change was made.
+- **Result/limits:** Functional request planning and integrity safeguards are covered by deterministic tests. Local UTF-8 byte estimates are conservative proxies rather than provider tokenization; model-specific limits must be configured lower when needed. Real translation quality remains unverified.
+- **Commit/issue:** None recorded by the AI assistant.

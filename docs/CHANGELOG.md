@@ -391,3 +391,19 @@
 - **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Người dùng xác nhận kết quả mix thực tế đạt yêu cầu. Các kiểm tra tự động trước đó được báo cáo đạt: 115 backend unit test, frontend production build, Python `compileall`, `pip check`, `git diff --check`; migration cấu hình render trên Supabase đã được áp dụng. Không chạy lại kiểm thử, không thay đổi dữ liệu `demo2` hoặc tạo lại media.
 - **Còn lại:** Không cho AUDIO-01. Các task khác giữ nguyên trạng thái.
+
+## 2026-10-25 — LEGACY-01: Kiểm toán đối chiếu công cụ desktop
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đối chiếu tĩnh bốn module desktop gốc với dịch vụ AutoDub hiện tại. Ghi lại các khác biệt, mã nguồn dẫn chứng, bảo vệ cần giữ, hành vi legacy không được khôi phục và yêu cầu cụ thể cho TRANS-03. Ưu tiên roadmap: LEGACY-01, TRANS-03, TRANS-04, benchmark chất lượng dịch/timeline; chỉ làm TIMELINE-02 nếu có bằng chứng cần thiết.
+- **Tệp:** `docs/LEGACY_PARITY_AUDIT.md`, `PLAN.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Xác nhận các module `translator.py`, `transcriber.py`, `tts_engine.py`, `video_editor.py` có trong thư mục tham chiếu `D:\video-dubbing-automation\modules`; kiểm tra đối chiếu từng nguồn với dịch vụ hiện hành và `Project` model. `git diff --check` đạt. Không chạy Gemini, TTS, FFmpeg, kiểm thử runtime hoặc thao tác dữ liệu Project.
+- **Còn lại:** Chỉ xác nhận hành vi qua mã nguồn; không tuyên bố runtime parity hoặc chất lượng đầu ra. TRANS-03 chưa được triển khai; Project hiện không lưu genre.
+
+## 2026-10-25 — TRANS-03: Dịch theo ngữ cảnh Bulk-First
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Khôi phục chiến lược dịch toàn transcript trước khi chuyển sang batch theo thứ tự. Request mang Segment UUID, thứ tự, timestamp nguồn và duration; batch fallback có tối đa hai Segment lân cận chỉ làm ngữ cảnh. Chỉ dịch target ID. Bổ sung prompt tiếng Việt hướng lời thoại tự nhiên, giữ nghĩa/liên tục và rút gọn khi phù hợp mà không bỏ ý; thêm ngân sách request, output cap, timeout, vô hiệu retry tự động của SDK và log số liệu an toàn.
+- **Tệp:** `backend/app/services/translation.py`, `backend/app/core/config.py`, `.env.example`, `tests/unit/test_translation.py`, `docs/LEGACY_PARITY_AUDIT.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 16 translation unit test đạt, gồm kiểm thử mock cho bulk 267 Segment với ngân sách cấu hình cho phép, batching theo giới hạn input/output, context chỉ đọc, ID/timestamp, rollback giao dịch, bản dịch đã sửa, quota/transient retry và cấu hình SDK. `compileall`, `pip check` và `git diff --check` đạt. Không gửi request Gemini, không dịch lại Project thật và không sửa dữ liệu/media.
+- **Còn lại:** Chưa xác nhận chất lượng bản dịch thực tế hoặc cải thiện tiếng Việt. Ước lượng token cục bộ dựa trên byte UTF-8, không phải tokenizer của provider; cấu hình cần giảm nếu dùng model có giới hạn thấp hơn. So sánh đầu ra thật thuộc TRANS-04 và cần phê duyệt rõ trước khi thay đổi bản dịch lưu trữ.

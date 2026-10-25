@@ -13,9 +13,15 @@ from sqlalchemy.orm import Session
 from app.models import Job, Project, Segment
 from app.models.base import Base
 from app.services.translation import (
+    SegmentSnapshot,
     TranslationConflictError,
     TranslationProviderError,
     TranslationValidationError,
+    _build_prompt,
+    _plan_translation_batches,
+    _create_gemini_client,
+    _request_batch,
+    _RequestMetrics,
     translate_project,
     validate_translation_response,
 )
@@ -91,9 +97,11 @@ class _FakeModels:
     def __init__(self, responses: list[object]) -> None:
         self._responses = iter(responses)
         self.request_count = 0
+        self.requests: list[dict[str, object]] = []
 
-    def generate_content(self, **_kwargs: object) -> _FakeResponse:
+    def generate_content(self, **kwargs: object) -> _FakeResponse:
         self.request_count += 1
+        self.requests.append(kwargs)
         result = next(self._responses)
         if isinstance(result, Exception):
             raise result
@@ -171,17 +179,18 @@ class TranslationPersistenceTests(unittest.TestCase):
             ]
         )
 
-        with self.assertRaises(TranslationValidationError):
-            translate_project(
-                self.engine,
-                project_id=PROJECT_ID,
-                job_id=JOB_ID,
-                input_revision=0,
-                stage_callback=lambda _stage: None,
-                client_factory=lambda: fake_client,
-                model="test-model",
-                batch_size=1,
-            )
+        with patch("app.services.translation.get_translation_bulk_max_segments", return_value=1):
+            with self.assertRaises(TranslationValidationError):
+                translate_project(
+                    self.engine,
+                    project_id=PROJECT_ID,
+                    job_id=JOB_ID,
+                    input_revision=0,
+                    stage_callback=lambda _stage: None,
+                    client_factory=lambda: fake_client,
+                    model="test-model",
+                    batch_size=1,
+                )
 
         with Session(self.engine) as session:
             segments = session.scalars(
@@ -199,6 +208,199 @@ class TranslationPersistenceTests(unittest.TestCase):
             self.assertEqual(job.stage, "transcript_ready")
         self.assertEqual(fake_client.models.request_count, 3)
         self.assertTrue(fake_client.closed)
+
+    def test_short_transcript_uses_one_bulk_request_with_timeline_context(self) -> None:
+        client = _FakeClient([response([
+            {"id": str(SEGMENT_ID), "translated_text": "Xin chào."},
+            {"id": str(SECOND_SEGMENT_ID), "translated_text": "Bạn khỏe không?"},
+        ])])
+        result = translate_project(
+            self.engine, project_id=PROJECT_ID, job_id=JOB_ID,
+            input_revision=0, stage_callback=lambda _stage: None,
+            client_factory=lambda: client, model="test-model",
+        )
+        self.assertEqual((result.segment_count, result.batch_count, result.request_count), (2, 1, 1))
+        request = client.models.requests[0]
+        prompt = str(request["contents"])
+        payload = json.loads(prompt.split("Input JSON:\n", 1)[1])
+        self.assertEqual(payload["context"], [])
+        self.assertEqual([row["id"] for row in payload["segments_to_translate"]], [
+            str(SEGMENT_ID), str(SECOND_SEGMENT_ID)
+        ])
+        self.assertEqual(payload["segments_to_translate"][0]["start_seconds"], "0.000")
+        self.assertEqual(payload["segments_to_translate"][0]["end_seconds"], "1.000")
+        self.assertEqual(payload["segments_to_translate"][0]["source_duration_seconds"], "1.000")
+        self.assertEqual(payload["segments_to_translate"][0]["order"], 0)
+        self.assertEqual(result.retry_count, 0)
+        self.assertGreaterEqual(result.duration_ms, 0)
+
+    def test_267_segments_fit_one_request_when_budgets_allow(self) -> None:
+        segments = [
+            SegmentSnapshot(
+                id=uuid.uuid5(PROJECT_ID, str(index)),
+                project_id=PROJECT_ID,
+                position=index,
+                start_seconds=index,
+                end_seconds=index + 1,
+                source_text=f"你好{index}",
+                revision=0,
+                warnings=None,
+            )
+            for index in range(267)
+        ]
+        with Session(self.engine) as session, session.begin():
+            session.execute(Segment.__table__.delete())
+            session.add_all([
+                Segment(
+                    id=row.id,
+                    project_id=PROJECT_ID,
+                    position=row.position,
+                    start_seconds=row.start_seconds,
+                    end_seconds=row.end_seconds,
+                    source_text=row.source_text,
+                    translated_text=None,
+                    revision=0,
+                )
+                for row in segments
+            ])
+        mocked_response = response([
+            {"id": str(row.id), "translated_text": f"Bản dịch {row.position}"}
+            for row in segments
+        ])
+        client = _FakeClient([mocked_response])
+        with (
+            patch("app.services.translation.get_translation_input_token_budget", return_value=262_144),
+            patch("app.services.translation.get_translation_output_token_budget", return_value=65_536),
+            patch("app.services.translation.get_translation_bulk_max_segments", return_value=500),
+            patch("app.services.translation.get_translation_bulk_max_source_characters", return_value=120_000),
+        ):
+            result = translate_project(
+                self.engine, project_id=PROJECT_ID, job_id=JOB_ID,
+                input_revision=0, stage_callback=lambda _stage: None,
+                client_factory=lambda: client, model="test-model", batch_size=40,
+            )
+        self.assertEqual((result.segment_count, result.batch_count, result.request_count), (267, 1, 1))
+        self.assertEqual(client.models.request_count, 1)
+        self.assertEqual(client.models.requests[0]["config"].max_output_tokens, 65_536)
+        with Session(self.engine) as session:
+            persisted = session.scalars(
+                select(Segment).where(Segment.project_id == PROJECT_ID).order_by(Segment.position)
+            ).all()
+        self.assertEqual(len(persisted), 267)
+        self.assertEqual(len({row.id for row in persisted}), 267)
+        self.assertEqual([row.position for row in persisted], list(range(267)))
+        self.assertEqual([row.start_seconds for row in persisted], list(range(267)))
+        self.assertEqual([row.translated_text for row in persisted], [f"Bản dịch {index}" for index in range(267)])
+
+    def test_over_budget_transcript_uses_ordered_batches_with_context_only_rows(self) -> None:
+        segments = [
+            SegmentSnapshot(
+                id=uuid.uuid5(PROJECT_ID, str(index)),
+                project_id=PROJECT_ID,
+                position=index,
+                start_seconds=index * 2,
+                end_seconds=index * 2 + 1,
+                source_text=f"dialogue {index}",
+                revision=0,
+                warnings=None,
+            )
+            for index in range(5)
+        ]
+        batches = _plan_translation_batches(
+            segments,
+            batch_size=2,
+            input_token_budget=20_000,
+            output_token_budget=20_000,
+            bulk_max_segments=2,
+            bulk_max_source_characters=120_000,
+            context_window=1,
+        )
+        self.assertEqual([[row.position for row in batch.targets] for batch in batches], [[0, 1], [2, 3], [4]])
+        self.assertEqual([[row.position for row in batch.context] for batch in batches], [[2], [1, 4], [3]])
+        for batch in batches:
+            prompt = _build_prompt(batch)
+            payload = json.loads(prompt.split("Input JSON:\n", 1)[1])
+            self.assertEqual(
+                [row["order"] for row in payload["segments_to_translate"]],
+                [row.position for row in batch.targets],
+            )
+            self.assertTrue(all(row["context_only"] for row in payload["context"]))
+            self.assertTrue(all(not row["context_only"] for row in payload["segments_to_translate"]))
+
+        context_batch = batches[1]
+        rows_including_forbidden_context = [
+            {"id": str(row.id), "translated_text": "Bản dịch."}
+            for row in (*context_batch.targets, context_batch.context[0])
+        ]
+        fake_client = _FakeClient([
+            response(rows_including_forbidden_context),
+            response(rows_including_forbidden_context),
+        ])
+        with self.assertRaises(TranslationValidationError):
+            _request_batch(
+                fake_client,
+                "test-model",
+                context_batch,
+                output_token_budget=20_000,
+                metrics=_RequestMetrics(),
+            )
+        self.assertEqual(fake_client.models.request_count, 2)
+
+    def test_input_or_output_budget_exhaustion_splits_or_fails_without_truncating(self) -> None:
+        segments = [
+            SegmentSnapshot(
+                id=uuid.uuid5(PROJECT_ID, str(index)),
+                project_id=PROJECT_ID,
+                position=index,
+                start_seconds=index,
+                end_seconds=index + 1,
+                source_text="短い台詞",
+                revision=0,
+                warnings=None,
+            )
+            for index in range(4)
+        ]
+        batches = _plan_translation_batches(
+            segments,
+            batch_size=4,
+            input_token_budget=20_000,
+            output_token_budget=400,
+            bulk_max_segments=500,
+            bulk_max_source_characters=120_000,
+            context_window=0,
+        )
+        self.assertGreater(len(batches), 1)
+        self.assertEqual([row.id for batch in batches for row in batch.targets], [row.id for row in segments])
+        input_limited_batches = _plan_translation_batches(
+            segments,
+            batch_size=4,
+            input_token_budget=1_400,
+            output_token_budget=20_000,
+            bulk_max_segments=500,
+            bulk_max_source_characters=120_000,
+            context_window=0,
+        )
+        self.assertEqual([len(batch.targets) for batch in input_limited_batches], [2, 2])
+        with self.assertRaises(TranslationValidationError):
+            _plan_translation_batches(
+                [segments[0]],
+                batch_size=1,
+                input_token_budget=20_000,
+                output_token_budget=100,
+                bulk_max_segments=0,
+                bulk_max_source_characters=120_000,
+                context_window=0,
+            )
+
+    def test_real_client_configuration_disables_sdk_retries_and_bounds_timeout(self) -> None:
+        from google import genai
+
+        with patch("app.services.translation.get_gemini_api_key", return_value="mock-key"):
+            with patch.object(genai, "Client") as client_constructor:
+                _create_gemini_client()
+        options = client_constructor.call_args.kwargs["http_options"]
+        self.assertEqual(options.retry_options.attempts, 1)
+        self.assertEqual(options.timeout, 120_000)
 
     def test_quota_error_fails_without_retry(self) -> None:
         error = RuntimeError("quota exceeded; daily limit")

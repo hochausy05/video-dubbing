@@ -15,6 +15,10 @@ JOB_WORKER_POLL_INTERVAL_SECONDS_ENV = "JOB_WORKER_POLL_INTERVAL_SECONDS"
 GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 GEMINI_MODEL_ENV = "GEMINI_MODEL"
 TRANSLATION_BATCH_SIZE_ENV = "TRANSLATION_BATCH_SIZE"
+TRANSLATION_INPUT_TOKEN_BUDGET_ENV = "TRANSLATION_INPUT_TOKEN_BUDGET"
+TRANSLATION_OUTPUT_TOKEN_BUDGET_ENV = "TRANSLATION_OUTPUT_TOKEN_BUDGET"
+TRANSLATION_BULK_MAX_SEGMENTS_ENV = "TRANSLATION_BULK_MAX_SEGMENTS"
+TRANSLATION_BULK_MAX_SOURCE_CHARACTERS_ENV = "TRANSLATION_BULK_MAX_SOURCE_CHARACTERS"
 EDGE_TTS_VOICE_ENV = "EDGE_TTS_VOICE"
 EDGE_TTS_CONCURRENCY_ENV = "EDGE_TTS_CONCURRENCY"
 TTS_OPTIMIZATION_MAX_RATE_ENV = "TTS_OPTIMIZATION_MAX_RATE_PERCENT"
@@ -23,6 +27,12 @@ RENDER_ORIGINAL_AUDIO_GAIN_ENV = "RENDER_ORIGINAL_AUDIO_GAIN"
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 DEFAULT_EDGE_TTS_VOICE = "vi-VN-HoaiMyNeural"
 DEFAULT_TRANSLATION_BATCH_SIZE = 40
+DEFAULT_TRANSLATION_INPUT_TOKEN_BUDGET = 262_144
+DEFAULT_TRANSLATION_OUTPUT_TOKEN_BUDGET = 16_384
+DEFAULT_TRANSLATION_BULK_MAX_SEGMENTS = 500
+DEFAULT_TRANSLATION_BULK_MAX_SOURCE_CHARACTERS = 120_000
+GEMINI_MAX_INPUT_TOKEN_LIMIT = 1_048_576
+GEMINI_MAX_OUTPUT_TOKEN_LIMIT = 65_536
 DEFAULT_EDGE_TTS_CONCURRENCY = 5
 DEFAULT_TTS_OPTIMIZATION_MAX_RATE_PERCENT = 35
 DEFAULT_TTS_OPTIMIZATION_MAX_ATTEMPTS = 4
@@ -127,6 +137,57 @@ def get_translation_batch_size() -> int:
     if batch_size > 100:
         raise RuntimeError(f"{TRANSLATION_BATCH_SIZE_ENV} must be between 1 and 100.")
     return batch_size
+
+
+def get_translation_input_token_budget() -> int:
+    """Return the app's conservative input-token budget for a Gemini request."""
+    value = _get_positive_integer_setting(
+        TRANSLATION_INPUT_TOKEN_BUDGET_ENV, DEFAULT_TRANSLATION_INPUT_TOKEN_BUDGET
+    )
+    if value > GEMINI_MAX_INPUT_TOKEN_LIMIT:
+        raise RuntimeError(
+            f"{TRANSLATION_INPUT_TOKEN_BUDGET_ENV} exceeds the supported Gemini input limit."
+        )
+    return value
+
+
+def get_translation_output_token_budget() -> int:
+    """Return the app's conservative output-token cap for a Gemini request."""
+    value = _get_positive_integer_setting(
+        TRANSLATION_OUTPUT_TOKEN_BUDGET_ENV, DEFAULT_TRANSLATION_OUTPUT_TOKEN_BUDGET
+    )
+    if value > GEMINI_MAX_OUTPUT_TOKEN_LIMIT:
+        raise RuntimeError(
+            f"{TRANSLATION_OUTPUT_TOKEN_BUDGET_ENV} exceeds the supported Gemini output limit."
+        )
+    return value
+
+
+def get_translation_bulk_max_segments() -> int:
+    """Return the legacy-informed ceiling for a full-transcript translation call."""
+    value = _get_positive_integer_setting(
+        TRANSLATION_BULK_MAX_SEGMENTS_ENV, DEFAULT_TRANSLATION_BULK_MAX_SEGMENTS
+    )
+    if value > DEFAULT_TRANSLATION_BULK_MAX_SEGMENTS:
+        raise RuntimeError(
+            f"{TRANSLATION_BULK_MAX_SEGMENTS_ENV} must not exceed "
+            f"{DEFAULT_TRANSLATION_BULK_MAX_SEGMENTS}."
+        )
+    return value
+
+
+def get_translation_bulk_max_source_characters() -> int:
+    """Return the legacy-informed source-character ceiling for full transcript calls."""
+    value = _get_positive_integer_setting(
+        TRANSLATION_BULK_MAX_SOURCE_CHARACTERS_ENV,
+        DEFAULT_TRANSLATION_BULK_MAX_SOURCE_CHARACTERS,
+    )
+    if value > DEFAULT_TRANSLATION_BULK_MAX_SOURCE_CHARACTERS:
+        raise RuntimeError(
+            f"{TRANSLATION_BULK_MAX_SOURCE_CHARACTERS_ENV} must not exceed "
+            f"{DEFAULT_TRANSLATION_BULK_MAX_SOURCE_CHARACTERS}."
+        )
+    return value
 
 
 def get_edge_tts_voice() -> str:

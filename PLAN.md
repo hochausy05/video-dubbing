@@ -6,11 +6,24 @@ This file defines phase order and exit gates. It does not track completion; use 
 
 ## Delivery principles
 
+- AutoDub is a web evolution of the tested desktop Video Dubbing Automation Tool. Relevant legacy behavior must be reviewed before implementing or replacing pipeline algorithms.
 - Build and verify the MVP incrementally throughout the semester.
 - Each task must produce a small, inspectable outcome before later work begins.
 - Each week should contain real, meaningful GitHub progress; never fabricate commits, tests, measurements, or dates.
 - A phase may take one or several weeks.
 - Expand scope only after the local single-user MVP flow has verified evidence.
+
+## Legacy-first pipeline work
+
+The source-level comparison and implementation requirements are recorded in `docs/LEGACY_PARITY_AUDIT.md`. Prioritize the work in this order:
+
+1. `LEGACY-01` — compare the available desktop modules against current services (complete; static source audit only).
+2. `TRANS-03` — restore bounded Bulk-First translation context while preserving strict validation, classified retries, and atomic persistence.
+3. `TRANS-04` — safe translation comparison and revision workflow.
+4. Translation and timeline quality benchmarking with reviewed outputs and measured evidence.
+5. `TIMELINE-02` only if benchmark or runtime evidence shows a remaining need.
+
+This sequence does not change existing task evidence or authorize changes to later pipeline behavior as part of the audit.
 
 ## Phases
 

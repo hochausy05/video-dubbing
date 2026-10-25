@@ -9,10 +9,16 @@
 
 ## Current Task
 
-- **Phase:** 8 — QA, polish, and final report
-- **Task:** `UI-03`
-- **Next after verified completion:** `QA-01`.
-- **Scope:** See the `UI-03` task entry below; responsive manual acceptance remains pending.
+- **Phase:** 6 — Gemini and translation review
+- **Task:** `TRANS-04`
+- **Next after verified completion:** `QA-05` translation/timeline quality benchmark.
+- **Scope:** Compare translation outputs only after explicit approval; do not automatically retranslate a persisted real Project.
+
+## Legacy parity and translation priority
+
+AutoDub is a web evolution of the tested desktop Video Dubbing Automation Tool. Relevant legacy behavior must be reviewed before implementing or replacing pipeline algorithms.
+
+Priority after the source audit: `LEGACY-01` (complete), `TRANS-03`, `TRANS-04`, translation/timeline quality benchmarking, then `TIMELINE-02` only if evidence demonstrates a remaining need. Existing task statuses and evidence remain authoritative.
 
 ## Phase 1 — Documents and environment
 
@@ -47,6 +53,12 @@
 - [x] `ASR-01` — Transcribe a short permitted sample with timestamps. Evidence: faster-whisper `small` ran through the separate worker against real uploaded speech and no-speech MP4s; timestamped Segments persisted to Supabase through SQLAlchemy and were confirmed from a fresh session. The speech transcript remained a single row after a safe rerun; no-speech persisted zero rows. CUDA inference was attempted but failed because CTranslate2 could not load `cublas64_12.dll`; real CPU `int8` inference succeeded. Combined Jobs remain `running` after ASR because translation is not implemented.
 
 ## Phase 6 — Gemini and translation review
+
+- [x] `LEGACY-01` — Audit the original desktop `translator.py`, `transcriber.py`, `tts_engine.py`, and `video_editor.py` against the current services. Evidence: all four source modules were located in the neighboring `D:\video-dubbing-automation\modules` reference directory and compared to current code; `docs/LEGACY_PARITY_AUDIT.md` records source references, parity classifications, protections, unsafe behaviors, and exact TRANS-03 requirements. This is a static source audit, not runtime parity or translation-quality verification.
+- [x] `TRANS-03` — Implement Bulk-First contextual translation using legacy behavior selectively while preserving TRANS-02 retries, strict complete Segment-ID validation, immutable source data, and atomic persistence. Evidence: deterministic mocked-provider tests verify a short transcript uses one request, a 267-Segment transcript uses one request under explicit configured input/output budgets, and larger/over-budget transcripts form ordered contextual batches without duplicate persistence. Request payloads include UUID, order, exact source timestamps/duration, and read-only neighboring context; only target IDs are returned and transactionally persisted. Strict malformed/partial rejection, edited-translation protection, later-batch rollback, quota no-retry, transient/malformed one-retry, SDK retry disablement, output cap, and 120-second timeout are covered. 16 focused translation tests passed; compileall, pip check, and `git diff --check` passed. No real Gemini request, Project data change, or translation-quality claim was made.
+- [ ] `TRANS-04` — Add safe translation comparison/revision workflow after TRANS-03; preserve user-confirmed revision and media invalidation guarantees.
+- [ ] `QA-05` — Benchmark translation continuity/quality and timeline behavior against reviewed examples; record reproducible method and actual evidence before changing thresholds or defaults.
+- [ ] `TIMELINE-02` — Revisit only if benchmark or runtime evidence shows a remaining timeline limitation after the current planner and conflict-resolution flow.
 
 - [x] `TRANS-01` — Translate each segment to Vietnamese with Gemini while preserving segment ID and source text. Evidence: the real FastAPI/worker flow sent four ASR Segments in one structured Gemini request; every Vietnamese result persisted to Supabase, and a pre-translation snapshot matched afterward for Segment IDs, source text, timestamps, and order. FastAPI returned `succeeded`/`translation_ready`; fresh SQLAlchemy and independent Supabase MCP queries confirmed persistence. No-speech completed `succeeded`/`no_speech` with zero Segments and no Gemini call. Nine unit tests reject missing, duplicate, unknown, malformed, and empty results, confirm an invalid later batch leaves all Segment data unchanged, and protect existing translations. JOB-02 failure and interruption transitions were also verified; task verification data was removed.
 - [x] `TRANS-02` — Add classified translation/quota failures and bounded retry. Mark simulated-provider tests explicitly as mocks. Evidence: deterministic mock-provider tests confirm HTTP 429/quota and authentication/configuration errors fail without retry; transient network errors and malformed structured results retry the same batch at most once; repeated transient and malformed responses fail without changing persisted Segment data or falling back to source text. Backoff is bounded to 0.5 seconds and tests replace it with a mock. `compileall`, `pip check`, all 14 unit tests, `git diff --check`, and secret/runtime/ignore checks passed. No real Gemini request or schema change was used.
