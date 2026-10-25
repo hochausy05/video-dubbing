@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import json
 import tempfile
 import unittest
 import uuid
@@ -23,6 +24,7 @@ from app.services.audio_normalization import measured_audio_duration_ms
 from app.services.tts import TTS_MEDIA_TYPE, translation_fingerprint
 from app.services.tts_timeline import TimelineSegmentInput, compute_timeline_plan
 from app.schemas.timeline import TimelineStretchOperation
+from app.schemas.render import RenderAudioSettings
 from app.services.video_render import (
     RENDER_MEDIA_TYPE,
     RenderError,
@@ -31,6 +33,8 @@ from app.services.video_render import (
     _SpeechInput,
     _probe_source,
     _validate_plan,
+    _load_render_snapshot,
+    _legacy_render_fingerprint,
     build_render_filtergraph,
     render_media,
 )
@@ -83,7 +87,10 @@ class RenderFilterAndMediaTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def _snapshot(self, *, with_audio: bool = True, one_stretch: bool = True) -> _RenderSnapshot:
+    def _snapshot(
+        self, *, with_audio: bool = True, one_stretch: bool = True,
+        audio_settings: RenderAudioSettings | None = None,
+    ) -> _RenderSnapshot:
         durations = [_make_speech(self.speech_paths[0], Decimal("1.08"))]
         segment_inputs = [TimelineSegmentInput(SEGMENT_ID, 0, 0, 500, durations[0])]
         speech_ids = [SEGMENT_ID]
@@ -115,7 +122,7 @@ class RenderFilterAndMediaTests(unittest.TestCase):
             segments=(),
             artifacts=(),
             speech_inputs=speeches,
-            original_audio_gain=0.1,
+            audio_settings=audio_settings or RenderAudioSettings(mode="fixed", background_gain=0.1),
             fingerprint="synthetic-plan",
         )
 
@@ -127,7 +134,7 @@ class RenderFilterAndMediaTests(unittest.TestCase):
         self.assertEqual(plan.stretch_operations, [])
         snapshot = _RenderSnapshot(PROJECT_ID, 0, self.source, "x", True, 0, plan, (), (), (
             _SpeechInput(SEGMENT_ID, uuid.uuid4(), speech, plan.segments[0].output_audio_start_ms, duration, 0, "x"),
-        ), 0.1, "x")
+        ), RenderAudioSettings(mode="fixed", background_gain=0.1), "x")
         result = self.root / "rendered.mp4"
         actual = render_media(snapshot, result)
         self.assertLessEqual(abs(actual - 2000), 100)
@@ -172,7 +179,7 @@ class RenderFilterAndMediaTests(unittest.TestCase):
             output_start_ms=plan.segments[index].output_audio_start_ms,
             duration_ms=(first_duration, second_duration)[index], rate_percent=20, sha256="synthetic",
         ) for index, item in enumerate(plan.segments))
-        snapshot = _RenderSnapshot(PROJECT_ID, 0, self.source, "x", True, 0, plan, (), (), speeches, 0.1, "x")
+        snapshot = _RenderSnapshot(PROJECT_ID, 0, self.source, "x", True, 0, plan, (), (), speeches, RenderAudioSettings(mode="fixed", background_gain=0.1), "x")
         output = self.root / "adjacent-stretches.mp4"
         actual = render_media(snapshot, output)
         self.assertLessEqual(abs(actual - (plan.planned_output_video_duration_ms or 0)), 100)
@@ -206,7 +213,7 @@ class RenderFilterAndMediaTests(unittest.TestCase):
             output_start_ms=item.output_audio_start_ms,
             duration_ms=(first_duration, second_duration)[index], rate_percent=20, sha256="synthetic",
         ) for index, item in enumerate(plan.segments))
-        snapshot = _RenderSnapshot(PROJECT_ID, 0, source, "x", True, 0, plan, (), (), speeches, 0.1, "x")
+        snapshot = _RenderSnapshot(PROJECT_ID, 0, source, "x", True, 0, plan, (), (), speeches, RenderAudioSettings(mode="fixed", background_gain=0.1), "x")
         output = self.root / "separated-stretches.mp4"
         actual = render_media(snapshot, output)
         self.assertLessEqual(abs(actual - (plan.planned_output_video_duration_ms or 0)), 100)
@@ -214,11 +221,11 @@ class RenderFilterAndMediaTests(unittest.TestCase):
     def test_no_original_audio_still_produces_mixed_dubbing_audio_track(self) -> None:
         source_no_audio = self.root / "without-audio.mp4"
         _make_video(source_no_audio, audio=False)
-        original = self._snapshot(with_audio=False)
+        original = self._snapshot(with_audio=False, audio_settings=RenderAudioSettings(mode="ducking"))
         snapshot = _RenderSnapshot(
             original.project_id, original.revision, source_no_audio, original.source_sha256, False,
             0, original.plan, original.segments, original.artifacts, original.speech_inputs,
-            original.original_audio_gain, original.fingerprint,
+            original.audio_settings, original.fingerprint,
         )
         output = self.root / "no-background.mp4"
         render_media(snapshot, output)
@@ -238,6 +245,42 @@ class RenderFilterAndMediaTests(unittest.TestCase):
             "stream=codec_name", "-of", "csv=p=0", str(output),
         ], capture_output=True, text=True, check=True).stdout.splitlines()
         self.assertEqual(probe, ["aac"])
+
+    def test_timeline_ducking_reduces_background_and_keeps_planned_duration(self) -> None:
+        settings = RenderAudioSettings(
+            mode="ducking", background_gain=0.7, ducked_gain=0.06,
+            tts_gain=0, attack_ms=80, release_ms=250, bridge_gap_ms=350,
+        )
+        snapshot = self._snapshot(audio_settings=settings)
+        graph = build_render_filtergraph(snapshot)
+        self.assertIn("amultiply[bg]", graph)
+        self.assertIn("[2:a:0]aresample=48000", graph)
+        output = self.root / "ducked.mp4"
+        duration = render_media(snapshot, output)
+        pcm = subprocess.run([
+            "ffmpeg", "-v", "error", "-i", str(output), "-map", "0:a:0",
+            "-ac", "1", "-ar", "48000", "-f", "s16le", "-",
+        ], capture_output=True, check=True).stdout
+        def rms(start_ms: int, end_ms: int) -> float:
+            first = start_ms * 48 * 2
+            last = end_ms * 48 * 2
+            samples = [int.from_bytes(pcm[index:index + 2], "little", signed=True)
+                       for index in range(first, last, 2)]
+            return (sum(sample * sample for sample in samples) / len(samples)) ** 0.5
+        speech_start = snapshot.speech_inputs[0].output_start_ms
+        during = rms(speech_start + 100, speech_start + 300)
+        outside = rms(1600, 1850)
+        self.assertGreater(outside, during * 2)
+        self.assertLessEqual(abs(duration - snapshot.plan.planned_output_video_duration_ms), 100)
+
+    def test_fixed_mix_keeps_background_volume_compatibility(self) -> None:
+        snapshot = self._snapshot(audio_settings=RenderAudioSettings(
+            mode="fixed", background_gain=0.1, tts_gain=0.9,
+        ))
+        graph = build_render_filtergraph(snapshot)
+        self.assertIn("[bgraw]volume=0.100000[bg]", graph)
+        self.assertIn("volume=0.900000", graph)
+        self.assertNotIn("amultiply[bg]", graph)
 
     def test_truncated_output_is_rejected_by_ffprobe_verification(self) -> None:
         truncated = self.root / "truncated.mp4"
@@ -346,13 +389,19 @@ class RenderJobAndApiTests(unittest.TestCase):
         process_claimed_job(self.engine, job_id)
 
     def test_enqueue_worker_publication_range_download_and_persistence(self) -> None:
-        queued = self.client.post(f"/projects/{PROJECT_ID}/render-jobs")
+        chosen_settings = {
+            "mode": "ducking", "background_gain": 0.42, "ducked_gain": 0.07,
+            "tts_gain": 0.92, "attack_ms": 80, "release_ms": 250,
+            "bridge_gap_ms": 350,
+        }
+        queued = self.client.post(f"/projects/{PROJECT_ID}/render-jobs", json=chosen_settings)
         self.assertEqual(queued.status_code, 202, queued.text)
         self.assertEqual(self.client.post(f"/projects/{PROJECT_ID}/render-jobs").status_code, 409)
         job_id = uuid.UUID(queued.json()["id"])
         with Session(self.engine) as session:
             job = session.get(Job, job_id)
             self.assertEqual((job.operation_type, job.status), ("render", "queued"))
+            self.assertEqual(job.audio_settings, chosen_settings)
         self._claim_and_run(job_id)
         with Session(self.engine) as session:
             job = session.get(Job, job_id)
@@ -372,6 +421,7 @@ class RenderJobAndApiTests(unittest.TestCase):
         self.patches[1].start()
         metadata = self.client.get(f"/projects/{PROJECT_ID}/rendered-video")
         self.assertEqual(metadata.status_code, 200, metadata.text)
+        self.assertEqual(metadata.json()["audio_settings"], chosen_settings)
         preview_url = metadata.json()["preview_url"].removeprefix("/api")
         download_url = metadata.json()["download_url"].removeprefix("/api")
         preview = self.client.get(preview_url, headers={"Range": "bytes=0-31"})
@@ -388,7 +438,10 @@ class RenderJobAndApiTests(unittest.TestCase):
         first_job_id = uuid.UUID(queued.json()["id"])
         self._claim_and_run(first_job_id)
         first_artifact = self.client.get(f"/projects/{PROJECT_ID}/rendered-video").json()["id"]
-        second = self.client.post(f"/projects/{PROJECT_ID}/render-jobs")
+        second = self.client.post(f"/projects/{PROJECT_ID}/render-jobs", json={
+            "mode": "ducking", "background_gain": 0.35, "ducked_gain": 0.08,
+            "tts_gain": 1.0, "attack_ms": 80, "release_ms": 250, "bridge_gap_ms": 350,
+        })
         second_job_id = uuid.UUID(second.json()["id"])
         with patch("app.services.video_render.render_media", side_effect=RenderError("synthetic encoder failure")):
             self._claim_and_run(second_job_id)
@@ -397,6 +450,38 @@ class RenderJobAndApiTests(unittest.TestCase):
             current = session.scalar(select(Artifact).where(Artifact.project_id == PROJECT_ID, Artifact.media_type == RENDER_MEDIA_TYPE, Artifact.is_current.is_(True)))
             self.assertEqual(str(current.id), first_artifact)
             self.assertTrue((self.storage / Path(current.storage_reference)).is_file())
+
+    def test_existing_v1_render_remains_available_after_schema_upgrade(self) -> None:
+        job_id = uuid.UUID(self.client.post(f"/projects/{PROJECT_ID}/render-jobs").json()["id"])
+        self._claim_and_run(job_id)
+        with Session(self.engine) as session, session.begin():
+            job = session.get(Job, job_id)
+            artifact = session.scalar(select(Artifact).where(Artifact.job_id == job_id))
+            snapshot = _load_render_snapshot(
+                session, PROJECT_ID,
+                audio_settings_override=RenderAudioSettings(mode="fixed", background_gain=0.1),
+            )
+            fingerprint = _legacy_render_fingerprint(snapshot, 0.1)
+            job.audio_settings = None
+            artifact.provenance_fingerprint = fingerprint
+            render_path = self.storage / Path(artifact.storage_reference)
+            metadata_path = render_path.with_name("render.json")
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["version"] = "timeline-render-v1"
+            metadata["input_fingerprint"] = fingerprint
+            metadata["original_audio_gain"] = 0.1
+            metadata.pop("audio_settings", None)
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        response = self.client.get(f"/projects/{PROJECT_ID}/rendered-video")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["audio_settings"]["mode"], "fixed")
+
+    def test_invalid_render_audio_settings_are_rejected(self) -> None:
+        response = self.client.post(
+            f"/projects/{PROJECT_ID}/render-jobs",
+            json={"mode": "ducking", "background_gain": 0.2, "ducked_gain": 0.4},
+        )
+        self.assertEqual(response.status_code, 422)
 
     def test_database_publication_failure_rolls_back_artifact_and_keeps_previous(self) -> None:
         first_job_id = uuid.UUID(self.client.post(f"/projects/{PROJECT_ID}/render-jobs").json()["id"])

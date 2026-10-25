@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     Numeric,
     String,
     Text,
@@ -100,6 +101,7 @@ class Job(TimestampedModel, Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=JobStatus.QUEUED.value)
     stage: Mapped[str | None] = mapped_column(String(128))
     safe_error: Mapped[str | None] = mapped_column(Text)
+    audio_settings: Mapped[dict[str, object] | None] = mapped_column(JSON)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

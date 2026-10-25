@@ -29,7 +29,7 @@ This file records facts verified during `INIT-04` and `ENV-00` plus explicit env
 - Process one video job at a time.
 - Start Whisper evaluation with model `small`.
 - RENDER-01 currently uses FFmpeg `libx264` CPU encoding for predictable availability. NVENC encoder presence is not treated as verified runtime support; no GPU rendering path is claimed.
-- `RENDER_ORIGINAL_AUDIO_GAIN` optionally sets original-background-audio mix gain (default `0.10`, accepted range `0`–`1`). Vietnamese dubbing remains the primary audio source.
+- AUDIO-01 render requests default to Auto Ducking (background gain `0.35`, ducked gain `0.08`, TTS gain `1.0`, 80 ms attack, 250 ms release, 350 ms bridge). Gains are bounded to `0`–`1`; `RENDER_ORIGINAL_AUDIO_GAIN` remains the compatibility default for legacy clients that omit render settings (default `0.10`). The final FFmpeg `alimiter` uses a 0.95 ceiling. Auto Ducking lowers the entire original soundtrack and does not separate voices.
 - Keep the project on drive D and maintain about 10 GB free during development.
 - For `DATA-01`, use Supabase-hosted PostgreSQL through SQLAlchemy and a PostgreSQL driver. Supply its `DATABASE_URL` through uncommitted backend/worker environment configuration only.
 - TTS-01 pins `edge-tts==7.3.1`, defaults to Vietnamese voice `vi-VN-HoaiMyNeural`, and bounds concurrent Segment requests to five. `EDGE_TTS_VOICE` and `EDGE_TTS_CONCURRENCY` are optional backend/worker settings.
@@ -50,7 +50,7 @@ This file records facts verified during `INIT-04` and `ENV-00` plus explicit env
 - CUDA Whisper inference was attempted on the RTX 3060 but failed because `cublas64_12.dll` was unavailable to CTranslate2; the worker logged the failure and completed real CPU `int8` inference. GPU inference remains unverified and is not claimed.
 - TTS-01 persisted worker generation, per-Segment browser playback, measured duration display and refresh persistence, and TTS-02 timeline analysis were manually accepted on `demo2`. TTS-03's real optimization worker/API/browser flow remains pending manual acceptance. No end-to-end performance claim is made. The configured MP4 upload limits are documented in `docs/PRD.md`; UPLOAD-02 must verify enforcement through the FastAPI endpoint.
 - Detected NVENC support does not prove every render command will succeed.
-- RENDER-01's synthetic media, FFmpeg decode, API range and worker publication checks pass, but real `demo2` rendering/listening/browser refresh/download acceptance has not been performed. No demo2 media or data was changed.
+- RENDER-01 rendering, preview, download and refresh were manually accepted by the user on `demo2`; planned and verified output durations were both 23,681 ms. AUDIO-01 has not yet been manually listened to on a real Project; its implementation verification uses synthetic media and local test storage only, and no demo2 media or data was changed.
 - Supabase connection and DATA-01 persistence verification completed using the ignored local `DATABASE_URL`; future environment or credential changes require a fresh connection check.
 
 ## Resource guardrail

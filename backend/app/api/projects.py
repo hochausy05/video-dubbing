@@ -28,6 +28,7 @@ from app.schemas import (
     TTSNormalizationResult,
     RenderArtifactRead,
 )
+from app.schemas.render import RenderAudioSettings
 from app.services.uploads import (
     UploadStorageError,
     UploadValidationError,
@@ -56,14 +57,16 @@ router = APIRouter(prefix="/projects", tags=["projects"])
     response_model=JobCreated,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def enqueue_project_render(project_id: uuid.UUID) -> JobCreated:
+def enqueue_project_render(
+    project_id: uuid.UUID, payload: RenderAudioSettings | None = None
+) -> JobCreated:
     """Queue rendering from the server-built current timeline plan."""
     engine = create_database_engine()
     try:
         sessions = create_session_factory(engine)
         with sessions() as session, session.begin():
             try:
-                return enqueue_render_job(session, project_id)
+                return enqueue_render_job(session, project_id, payload)
             except ProjectNotFoundError:
                 raise HTTPException(status_code=404, detail="Project not found.") from None
             except RenderError as error:
@@ -667,6 +670,10 @@ def list_project_jobs(project_id: uuid.UUID) -> list[JobDetail]:
                     created_at=job.created_at,
                     started_at=job.started_at,
                     finished_at=job.completed_at,
+                    audio_settings=(
+                        RenderAudioSettings.model_validate(job.audio_settings)
+                        if job.operation_type == "render" and job.audio_settings else None
+                    ),
                 )
                 for job in jobs
             ]

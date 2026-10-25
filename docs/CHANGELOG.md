@@ -375,3 +375,19 @@
 - **Tệp:** `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** Người dùng xác nhận browser acceptance thành công và các kết quả nêu trên. `git diff --check` đạt. Không chạy thêm test, không sửa dữ liệu `demo2`, không tái tạo audio/video. TTS-04 đã hoàn thành từ trước và giữ nguyên trạng thái.
 - **Còn lại:** Không cho TIMELINE-01 và RENDER-01. Các kiểm tra thủ công được ghi nhận theo xác nhận của người dùng; không thực hiện thêm kiểm thử trong lần đóng task này.
+
+## 2026-10-25 — AUDIO-01: Trộn audio theo timeline và ducking
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm lựa chọn Fixed/Auto Ducking tại Project Viewer và lưu cấu hình đã kiểm tra vào Render Job. Worker dùng đúng timestamp đầu ra và duration normalized TTS từ timeline planner; ducking mặc định 0,35 nền / 0,08 khi thoại Việt, TTS 1,0, attack 80 ms, release 250 ms và nối khoảng lặng tối đa 350 ms. Envelope WAV mono 1 kHz theo Job được trộn bằng FFmpeg `amultiply`; limiter hiện có giữ trần 0,95. Sidecar và API render ghi/đọc lại đầy đủ cấu hình; generation cũ vẫn hợp lệ trong khi render thay thế chưa publish. Không tách giọng: ducking giảm toàn bộ audio gốc.
+- **Tệp:** `.env.example`, `TASKS.md`, `backend/app/api/jobs.py`, `backend/app/api/projects.py`, `backend/app/models/entities.py`, `backend/app/schemas/jobs.py`, `backend/app/schemas/render.py`, `backend/app/services/audio_mixing.py`, `backend/app/services/video_render.py`, `docs/ARCHITECTURE.md`, `docs/ENVIRONMENT.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`, `frontend/src/App.tsx`, `frontend/src/index.css`, `supabase/migrations/20261025073602_audio_01_render_audio_settings.sql`, `tests/unit/test_audio_mixing.py`, `tests/unit/test_video_render.py`
+- **Kiểm chứng:** Migration cộng thêm cột nullable `autodub_jobs.audio_settings` đã áp dụng trên Supabase `video-dubbing`; SQLAlchemy kết nối qua `DATABASE_URL` và truy vấn schema mới thành công, không sửa hàng, Project hoặc media. 115 backend unit test đạt, gồm FFmpeg/FFprobe thật trên media tổng hợp, mức RMS nền thấp hơn khi thoại đang chạy, duration đầu ra trong sai số planner, và giữ Artifact cũ sau lỗi render với cấu hình khác; frontend production build, Python `compileall`, `pip check`, `git diff --check` và kiểm tra schema Supabase đạt.
+- **Còn lại:** AUDIO-01 vẫn một phần cho đến khi người dùng nghe và nghiệm thu render trên Project thật. Không render hoặc sửa media/dữ liệu `demo2`; không tuyên bố chất lượng nghe thực tế.
+
+## 2026-10-25 — AUDIO-01: Hoàn tất nghiệm thu Auto Ducking trên demo2
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đóng AUDIO-01 sau khi người dùng xác nhận browser và nghe audio render trên `demo2` đạt yêu cầu với Auto Ducking: gain nền 0,35; gain âm thanh gốc khi thoại Việt 0,08; gain TTS Việt 1,0; attack 80 ms; release 250 ms; nối khoảng thoại ngắn 350 ms.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Người dùng xác nhận kết quả mix thực tế đạt yêu cầu. Các kiểm tra tự động trước đó được báo cáo đạt: 115 backend unit test, frontend production build, Python `compileall`, `pip check`, `git diff --check`; migration cấu hình render trên Supabase đã được áp dụng. Không chạy lại kiểm thử, không thay đổi dữ liệu `demo2` hoặc tạo lại media.
+- **Còn lại:** Không cho AUDIO-01. Các task khác giữ nguyên trạng thái.

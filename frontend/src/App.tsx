@@ -46,6 +46,17 @@ type JobState = {
   created_at?: string;
   started_at?: string | null;
   finished_at?: string | null;
+  audio_settings?: RenderAudioSettings | null;
+};
+
+type RenderAudioSettings = {
+  mode: "fixed" | "ducking";
+  background_gain: number;
+  ducked_gain: number;
+  tts_gain: number;
+  attack_ms: number;
+  release_ms: number;
+  bridge_gap_ms: number;
 };
 
 type TTSArtifact = {
@@ -148,6 +159,7 @@ type RenderArtifact = {
   preview_url: string;
   download_url: string;
   current: boolean;
+  audio_settings: RenderAudioSettings;
 };
 
 type ApiError = {
@@ -156,6 +168,32 @@ type ApiError = {
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
 const JOB_POLL_INTERVAL_MS = 4000;
+const DEFAULT_RENDER_AUDIO_SETTINGS: RenderAudioSettings = {
+  mode: "ducking", background_gain: 0.35, ducked_gain: 0.08,
+  tts_gain: 1, attack_ms: 80, release_ms: 250, bridge_gap_ms: 350,
+};
+
+function readRenderAudioSettings(value: string | null): RenderAudioSettings {
+  if (!value) return DEFAULT_RENDER_AUDIO_SETTINGS;
+  try {
+    const parsed = JSON.parse(value) as Partial<RenderAudioSettings>;
+    const bounded = (candidate: unknown, fallback: number, min: number, max: number) =>
+      typeof candidate === "number" && Number.isFinite(candidate)
+        ? Math.max(min, Math.min(max, candidate)) : fallback;
+    const background = bounded(parsed.background_gain, DEFAULT_RENDER_AUDIO_SETTINGS.background_gain, 0, 1);
+    return {
+      mode: parsed.mode === "fixed" ? "fixed" : "ducking",
+      background_gain: background,
+      ducked_gain: Math.min(background, bounded(parsed.ducked_gain, DEFAULT_RENDER_AUDIO_SETTINGS.ducked_gain, 0, 1)),
+      tts_gain: bounded(parsed.tts_gain, DEFAULT_RENDER_AUDIO_SETTINGS.tts_gain, 0, 1),
+      attack_ms: bounded(parsed.attack_ms, 80, 10, 500),
+      release_ms: bounded(parsed.release_ms, 250, 20, 2000),
+      bridge_gap_ms: bounded(parsed.bridge_gap_ms, 350, 0, 2000),
+    };
+  } catch {
+    return DEFAULT_RENDER_AUDIO_SETTINGS;
+  }
+}
 
 const jobStatusLabels: Record<JobStatus, string> = {
   queued: "Waiting",
@@ -242,6 +280,7 @@ function App() {
   const [normalizationError, setNormalizationError] = useState<string | null>(null);
   const [renderArtifact, setRenderArtifact] = useState<RenderArtifact | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [renderAudioSettings, setRenderAudioSettings] = useState<RenderAudioSettings>(DEFAULT_RENDER_AUDIO_SETTINGS);
 
   async function loadProjectJobs(projectList: Project[]) {
     await Promise.all(projectList.map(async (project) => {
@@ -324,6 +363,12 @@ function App() {
     setNormalizationError(null);
     setRenderArtifact(null);
     setRenderError(null);
+    try {
+      const storedSettings = window.localStorage.getItem(`autodub-render-audio:${project.id}`);
+      setRenderAudioSettings(readRenderAudioSettings(storedSettings));
+    } catch {
+      setRenderAudioSettings(DEFAULT_RENDER_AUDIO_SETTINGS);
+    }
     if (updateUrl) {
       window.history.pushState({}, "", `?project=${encodeURIComponent(project.id)}`);
     }
@@ -776,10 +821,17 @@ function App() {
     setEnqueueErrorsByProject((current) => ({ ...current, [project.id]: "" }));
     setRenderError(null);
     try {
-      const response = await fetch(`/api/projects/${project.id}/render-jobs`, { method: "POST" });
+      const response = await fetch(`/api/projects/${project.id}/render-jobs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(renderAudioSettings),
+      });
       if (!response.ok) throw new Error(await readError(response));
       const created = (await response.json()) as JobState;
-      setJobsByProject((current) => ({ ...current, [project.id]: { ...created, job_type: "render" } }));
+      setJobsByProject((current) => ({
+        ...current,
+        [project.id]: { ...created, job_type: "render", audio_settings: renderAudioSettings },
+      }));
     } catch (enqueueError) {
       setEnqueueErrorsByProject((current) => ({
         ...current,
@@ -788,6 +840,20 @@ function App() {
     } finally {
       setEnqueueingProjects((current) => ({ ...current, [project.id]: false }));
     }
+  }
+
+  function updateRenderAudioSettings(patch: Partial<RenderAudioSettings>) {
+    setRenderAudioSettings((current) => {
+      const next = { ...current, ...patch };
+      if (selectedProject) {
+        try {
+          window.localStorage.setItem(`autodub-render-audio:${selectedProject.id}`, JSON.stringify(next));
+        } catch {
+          // Keep this selection usable for the current session when browser storage is unavailable.
+        }
+      }
+      return next;
+    });
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -862,6 +928,9 @@ function App() {
     const hasTtsAudio = Object.keys(ttsAudioBySegment).length > 0;
     const normalizationJob = job?.job_type === "tts_normalize";
     const renderJob = job?.job_type === "render";
+    const renderJobActive = renderJob && (job.status === "queued" || job.status === "running");
+    const renderSettingsForControls = renderJobActive && job.audio_settings
+      ? job.audio_settings : renderAudioSettings;
     const timelineAvailable = (job?.job_type === "tts" && job.stage === "tts_ready") || optimizationJob || normalizationJob || hasTtsAudio;
     const canAnalyzeTimeline = job?.status !== "queued" && job?.status !== "running";
     const canNormalizeAudio = segments.length > 0 && segments.every((segment) => ttsAudioBySegment[segment.id]?.current)
@@ -894,6 +963,9 @@ function App() {
             {renderArtifact && <section className="render-result card" aria-label="Rendered dubbed video">
               <h2>Rendered dubbed video</h2>
               <p>Verified duration: {formatTimestamp(renderArtifact.duration_ms / 1000)} · Planned duration: {formatTimestamp(renderArtifact.planned_duration_ms / 1000)}</p>
+              <p>Cấu hình âm thanh đã render: {renderArtifact.audio_settings.mode === "ducking" ? "Tự động giảm âm nền" : "Mức âm cố định"}; nền {Math.round(renderArtifact.audio_settings.background_gain * 100)}%, khi thoại Việt {Math.round((renderArtifact.audio_settings.mode === "ducking" ? renderArtifact.audio_settings.ducked_gain : renderArtifact.audio_settings.background_gain) * 100)}%, giọng Việt {Math.round(renderArtifact.audio_settings.tts_gain * 100)}%.</p>
+              {JSON.stringify(renderArtifact.audio_settings) !== JSON.stringify(renderAudioSettings)
+                && <p className="state-message">Cấu hình đang chọn khác với video đã xuất. Video hiện tại vẫn được giữ cho đến khi bản render thay thế thành công.</p>}
               <video className="project-video" controls preload="metadata" src={renderArtifact.preview_url} />
               <a className="download-render" href={renderArtifact.download_url}>Download MP4</a>
             </section>}
@@ -904,6 +976,7 @@ function App() {
                 <span className={`status-badge job-status-${job.status}`}>{jobStatusLabels[job.status]}</span>
               </div>
               {job.stage && <p className="job-stage">Stage: {job.stage}</p>}
+              {renderJob && job.audio_settings && <p className="job-stage">Cấu hình âm thanh của Job render: {job.audio_settings.mode === "ducking" ? "Tự động giảm âm nền" : "Mức âm cố định"}; nền {Math.round(job.audio_settings.background_gain * 100)}%, khi thoại Việt {Math.round((job.audio_settings.mode === "ducking" ? job.audio_settings.ducked_gain : job.audio_settings.background_gain) * 100)}%, giọng Việt {Math.round(job.audio_settings.tts_gain * 100)}%.</p>}
               {(job.status === "failed" || job.status === "interrupted") && job.error && <p className="job-error">{job.error}</p>}
               {(job.status === "queued" || job.status === "running") && renderJob && <p className="job-stage">Video rendering is {job.status}.</p>}
               {(job.status === "queued" || job.status === "running") && !["tts_optimize", "tts_normalize", "render"].includes(job.job_type ?? "") && <p className="job-stage">Transcript processing is {job.status}.</p>}
@@ -1082,8 +1155,32 @@ function App() {
                   <div><dt>Segments to stretch</dt><dd>{timelinePlan.stretch_segment_count} / {timelinePlan.segment_count}</dd></div>
                 </dl>
                 {timelinePlan.renderable && <div className="render-action card">
-                  <p>Rendering uses the current validated timeline plan and published TTS audio. It does not synthesize or change audio.</p>
+                  <p>Chế độ tự động giảm âm nền làm nhỏ toàn bộ âm thanh gốc khi có thoại Việt; không thể tách riêng giọng Trung Quốc hoặc các giọng khác. Audio TTS, tốc độ đọc và timeline không bị thay đổi.</p>
                   <p>Expected output: {timelinePlan.planned_output_video_duration_ms === null ? "Unavailable" : formatTimestamp(timelinePlan.planned_output_video_duration_ms / 1000)} · {timelinePlan.stretch_operations.length} video stretch operation(s)</p>
+                  <div className="render-audio-settings">
+                    <label>Chế độ phối âm
+                      <select value={renderSettingsForControls.mode} disabled={renderJobActive} onChange={(event) => updateRenderAudioSettings({ mode: event.currentTarget.value as RenderAudioSettings["mode"] })}>
+                        <option value="ducking">Tự động giảm âm nền</option>
+                        <option value="fixed">Mức âm cố định</option>
+                      </select>
+                    </label>
+                    <label>Âm thanh gốc khi không có thoại (%)
+                      <input type="number" min="0" max="100" step="1" disabled={renderJobActive} value={Math.round(renderSettingsForControls.background_gain * 100)}
+                        onChange={(event) => {
+                          const background = Math.max(0, Math.min(100, Number(event.currentTarget.value) || 0)) / 100;
+                          updateRenderAudioSettings({ background_gain: background, ducked_gain: Math.min(renderSettingsForControls.ducked_gain, background) });
+                        }} />
+                    </label>
+                    {renderSettingsForControls.mode === "ducking" && <label>Âm thanh gốc khi có thoại Việt (%)
+                      <input type="number" min="0" max={Math.round(renderSettingsForControls.background_gain * 100)} step="1" disabled={renderJobActive} value={Math.round(renderSettingsForControls.ducked_gain * 100)}
+                        onChange={(event) => updateRenderAudioSettings({ ducked_gain: Math.max(0, Math.min(renderSettingsForControls.background_gain, (Number(event.currentTarget.value) || 0) / 100)) })} />
+                    </label>}
+                    <label>Âm lượng giọng Việt (%)
+                      <input type="number" min="0" max="100" step="1" disabled={renderJobActive} value={Math.round(renderSettingsForControls.tts_gain * 100)}
+                        onChange={(event) => updateRenderAudioSettings({ tts_gain: Math.max(0, Math.min(1, (Number(event.currentTarget.value) || 0) / 100)) })} />
+                    </label>
+                    {renderSettingsForControls.mode === "ducking" && <p>Mặc định: attack 80 ms, release 250 ms; nối khoảng ngắt thoại tối đa 350 ms.</p>}
+                  </div>
                   <button type="button" className="tts-start-button" onClick={() => void startRender(selectedProject)}
                     disabled={enqueueingProjects[selectedProject.id] || job?.status === "queued" || job?.status === "running"}>
                     {renderJob && (job.status === "queued" || job.status === "running") ? "Rendering dubbed video…" : enqueueingProjects[selectedProject.id] ? "Queuing render…" : "Render dubbed video"}

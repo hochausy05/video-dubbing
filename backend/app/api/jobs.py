@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.database import create_database_engine, create_session_factory
 from app.models import Job, JobStatus
 from app.schemas import JobCreated, JobDetail
+from app.schemas.render import RenderAudioSettings
 
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -26,6 +27,10 @@ def _job_detail(job: Job) -> JobDetail:
         created_at=job.created_at,
         started_at=job.started_at,
         finished_at=job.completed_at,
+        audio_settings=(
+            RenderAudioSettings.model_validate(job.audio_settings)
+            if job.operation_type == "render" and job.audio_settings else None
+        ),
     )
 
 

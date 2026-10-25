@@ -455,6 +455,38 @@ button:focus-visible {
   margin-bottom: 0.75rem;
 }
 
+.render-audio-settings {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  margin: 0.85rem 0;
+}
+
+.render-audio-settings label {
+  color: #34445c;
+  display: grid;
+  font-size: 0.82rem;
+  font-weight: 650;
+  gap: 0.35rem;
+}
+
+.render-audio-settings input,
+.render-audio-settings select {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.45rem;
+  color: #1e293b;
+  font: inherit;
+  min-height: 2.35rem;
+  padding: 0.35rem 0.55rem;
+  width: 100%;
+}
+
+.render-audio-settings p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .transcript-heading {
   align-items: center;
   display: flex;

@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.render import RenderAudioSettings
+
 
 class JobCreated(BaseModel):
     """Public identifiers and queue state returned after enqueue."""
@@ -33,3 +35,4 @@ class JobDetail(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    audio_settings: RenderAudioSettings | None = None

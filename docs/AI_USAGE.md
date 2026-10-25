@@ -384,3 +384,21 @@
 - **Verification:** User confirmed on `demo2` that the timeline planner reported zero blockers and ready-to-render; the render Job completed at `render_complete`; preview and download were available; planned and verified output durations were both 23,681 ms; the plan had 11 TTS Segments and 7 stretch operations. `git diff --check` was run for this close-out. No additional tests were run.
 - **Result/limits:** TIMELINE-01 and RENDER-01 are complete based on user-confirmed browser acceptance. No new playback/listening detail beyond the user's report is claimed. No Project rows or media were changed.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `AUDIO-01` — Timeline-aware audio mixing implementation
+
+- **AI assistance:** Added validated per-render mix settings, a deterministic output-timeline ducking envelope, FFmpeg integration, artifact provenance/API exposure, Project Viewer controls, and focused regression/integration coverage. Applied the additive nullable Job settings column to the active Supabase project after inspecting its current schema.
+- **Developer decision:** Preserve fixed-mix compatibility, use conservative Auto Ducking defaults (0.35 background, 0.08 ducked, 1.0 TTS; 80 ms attack, 250 ms release, 350 ms bridge), keep the existing 0.95 limiter, and never alter planner timing or source/TTS assets. Keep AUDIO-01 partial pending the user's real-Project listening acceptance; do not render demo2.
+- **Affected areas:** Render Job/API/schema/model, audio mixing and render worker service, viewer settings and published-render messaging, additive Supabase migration, architecture/environment/task records, and focused tests.
+- **Verification:** 115 backend unit tests passed, including FFmpeg/FFprobe synthetic-media checks for ducked/background RMS and planned output duration, Artifact preservation across a changed-settings render failure, and existing v1 render compatibility; frontend production build, `compileall`, `pip check`, Supabase schema inspection, and a SQLAlchemy connection/query through configured `DATABASE_URL` passed. No real Project audio was rendered or listened to.
+- **Result/limits:** Per-Job settings are persisted, included in render fingerprints and artifact sidecars, and returned from the API. Auto Ducking reduces the complete original soundtrack and cannot isolate speech. Browser refresh and manual audio quality acceptance remain unverified.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `AUDIO-01` — demo2 manual listening acceptance close-out
+
+- **AI assistance:** Updated the AUDIO-01 task status and appended the user-confirmed manual browser/listening evidence to the project audit logs.
+- **Developer decision:** Mark AUDIO-01 complete using the user's acceptance of Auto Ducking on `demo2`; preserve implementation and demo2 data/media, and do not rerun tests or rendering.
+- **Affected areas:** `TASKS.md`, `docs/CHANGELOG.md`, and this audit log.
+- **Verification:** User confirmed the resulting mix was satisfactory with 0.35 background gain, 0.08 ducked gain, 1.0 Vietnamese TTS gain, 80 ms attack, 250 ms release, and 350 ms short-gap bridging. Prior reported checks: 115 backend unit tests, frontend build, `compileall`, `pip check`, `git diff --check`, and successful Supabase migration. No additional checks were run for this close-out.
+- **Result/limits:** AUDIO-01 is complete based on the user's real-world listening acceptance. No further measurements or test results are claimed.
+- **Commit/issue:** None recorded by the AI assistant.

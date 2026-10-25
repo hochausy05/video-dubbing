@@ -20,6 +20,8 @@ from sqlalchemy.orm import Session
 from app.core.config import get_render_original_audio_gain
 from app.models import Artifact, Job, JobStatus, Project, Segment
 from app.schemas import JobCreated, RenderArtifactRead
+from app.schemas.render import RenderAudioSettings
+from app.services.audio_mixing import write_ducking_envelope
 from app.schemas.timeline import TTSTimelinePlan
 from app.services.audio_normalization import measured_audio_duration_ms
 from app.services.tts import TTS_MEDIA_TYPE
@@ -63,7 +65,7 @@ class _RenderSnapshot:
     segments: tuple[tuple[object, ...], ...]
     artifacts: tuple[tuple[object, ...], ...]
     speech_inputs: tuple[_SpeechInput, ...]
-    original_audio_gain: float
+    audio_settings: RenderAudioSettings
     fingerprint: str
 
 
@@ -96,6 +98,32 @@ def _sha256_file(path: Path) -> str:
 def _sha256_json(value: object) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _legacy_render_fingerprint(snapshot: _RenderSnapshot, original_audio_gain: float) -> str:
+    """Reproduce RENDER-01 identity for already-published v1 renders during upgrade."""
+    payload = {
+        "project_id": str(snapshot.project_id),
+        "revision": snapshot.revision,
+        "source_sha256": snapshot.source_sha256,
+        "source_has_audio": snapshot.source_has_audio,
+        "source_audio_start_ms": snapshot.original_audio_start_ms,
+        "segments": [
+            [str(value) if isinstance(value, UUID) else str(value) for value in row]
+            for row in snapshot.segments
+        ],
+        "artifacts": [[str(value) if isinstance(value, UUID) else value for value in row]
+                      for row in snapshot.artifacts],
+        "timeline": snapshot.plan.model_dump(mode="json"),
+        "settings": {
+            "original_audio_gain": original_audio_gain,
+            "video_encoder": "libx264",
+            "audio_encoder": "aac",
+            "duration_tolerance_ms": RENDER_DURATION_TOLERANCE_MS,
+            "normalization": "timeline-render-v1",
+        },
+    }
+    return _sha256_json(payload)
 
 
 def _safe_render_dir(project_id: UUID, job_id: UUID, *, temporary: bool = False) -> Path:
@@ -202,6 +230,7 @@ def _load_render_snapshot(
     project_id: UUID,
     *,
     ignore_active_job_id: UUID | None = None,
+    audio_settings_override: RenderAudioSettings | None = None,
 ) -> _RenderSnapshot:
     project = session.get(Project, project_id)
     if project is None:
@@ -292,7 +321,21 @@ def _load_render_snapshot(
 
     source_digest = _sha256_file(source_path)
     artifact_snapshot = tuple(sorted(artifact_snapshot_rows, key=lambda row: str(row[0])))
-    gain = get_render_original_audio_gain()
+    active_job = session.scalar(select(Job).where(
+        Job.project_id == project_id,
+        Job.operation_type == "render",
+        Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+    ).order_by(Job.created_at.desc(), Job.id.desc()).limit(1))
+    settings_data = (
+        audio_settings_override.model_dump(mode="json") if audio_settings_override is not None
+        else active_job.audio_settings if active_job is not None else None
+    )
+    try:
+        audio_settings = RenderAudioSettings.model_validate(settings_data) if settings_data else RenderAudioSettings(
+            mode="fixed", background_gain=get_render_original_audio_gain()
+        )
+    except ValueError as error:
+        raise RenderError("The queued render audio settings are invalid.") from error
     fingerprint_payload = {
         "project_id": str(project_id),
         "revision": project.current_revision,
@@ -307,7 +350,7 @@ def _load_render_snapshot(
                       for row in artifact_snapshot],
         "timeline": plan.model_dump(mode="json"),
         "settings": {
-            "original_audio_gain": gain,
+            "audio_settings": audio_settings.model_dump(mode="json"),
             "video_encoder": "libx264",
             "audio_encoder": "aac",
             "duration_tolerance_ms": RENDER_DURATION_TOLERANCE_MS,
@@ -329,7 +372,7 @@ def _load_render_snapshot(
         segments=segment_snapshot,
         artifacts=artifact_snapshot,
         speech_inputs=tuple(speech_inputs),
-        original_audio_gain=gain,
+        audio_settings=audio_settings,
         fingerprint=fingerprint,
     )
 
@@ -360,7 +403,8 @@ def build_render_filtergraph(snapshot: _RenderSnapshot) -> str:
     for index, speech in enumerate(snapshot.speech_inputs):
         lines.append(
             f"[{index + 1}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
-            f"asetpts=PTS-STARTPTS,adelay=delays={speech.output_start_ms}:all=1[dub{index}];"
+            f"asetpts=PTS-STARTPTS,volume={snapshot.audio_settings.tts_gain:.6f},"
+            f"adelay=delays={speech.output_start_ms}:all=1[dub{index}];"
         )
         dub_labels.append(f"[dub{index}]")
 
@@ -380,7 +424,18 @@ def build_render_filtergraph(snapshot: _RenderSnapshot) -> str:
             )
         lines.append("".join(f"[a{i}]" for i in range(len(intervals)))
                      + f"concat=n={len(intervals)}:v=0:a=1[bgraw];")
-        lines.append(f"[bgraw]volume={snapshot.original_audio_gain:.6f}[bg];")
+        if snapshot.audio_settings.mode == "fixed":
+            lines.append(
+                f"[bgraw]volume={snapshot.audio_settings.background_gain:.6f}[bg];"
+            )
+        else:
+            envelope_input_index = 1 + len(snapshot.speech_inputs)
+            lines.append(
+                f"[{envelope_input_index}:a:0]aresample=48000:async=0:first_pts=0,"
+                "aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                "asetpts=PTS-STARTPTS[duckenv];"
+            )
+            lines.append("[bgraw][duckenv]amultiply[bg];")
         mix_labels.append("[bg]")
     mix_labels.extend(dub_labels)
     lines.append(
@@ -437,7 +492,13 @@ def _probe_rendered_media(path: Path) -> int:
     return duration_ms
 
 
-def render_media(snapshot: _RenderSnapshot, output_path: Path, *, filter_script_path: Path | None = None) -> int:
+def render_media(
+    snapshot: _RenderSnapshot,
+    output_path: Path,
+    *,
+    filter_script_path: Path | None = None,
+    envelope_path: Path | None = None,
+) -> int:
     """Render and verify an MP4 from a prepared, authoritative timeline snapshot."""
     if not output_path.parent.is_dir():
         raise RenderError("Render output directory is unavailable.")
@@ -447,12 +508,26 @@ def render_media(snapshot: _RenderSnapshot, output_path: Path, *, filter_script_
     command = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(snapshot.source_path)]
     for speech in snapshot.speech_inputs:
         command.extend(["-i", str(speech.path)])
+    generated_envelope = False
+    if snapshot.source_has_audio and snapshot.audio_settings.mode == "ducking":
+        envelope_path = envelope_path or output_path.with_name(f"{output_path.stem}-ducking.wav")
+        write_ducking_envelope(
+            envelope_path,
+            ((item.output_start_ms, item.output_start_ms + item.duration_ms)
+             for item in snapshot.speech_inputs),
+            duration_ms=snapshot.plan.planned_output_video_duration_ms or 0,
+            settings=snapshot.audio_settings,
+        )
+        generated_envelope = True
+        command.extend(["-i", str(envelope_path)])
     command.extend([
         "-filter_complex_script", str(script_path), "-map", "[vout]", "-map", "[aout]",
         "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-fps_mode", "vfr",
         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output_path),
     ])
     _run(command, timeout=FFMPEG_TIMEOUT_SECONDS, failure_message="FFmpeg could not render this Project.")
+    if generated_envelope:
+        envelope_path.unlink(missing_ok=True)
     if not output_path.is_file() or output_path.stat().st_size <= 0:
         raise RenderError("FFmpeg did not produce a non-empty MP4.")
     actual_duration_ms = _probe_rendered_media(output_path)
@@ -467,7 +542,9 @@ def render_media(snapshot: _RenderSnapshot, output_path: Path, *, filter_script_
     return actual_duration_ms
 
 
-def enqueue_render_job(session: Session, project_id: UUID) -> JobCreated:
+def enqueue_render_job(
+    session: Session, project_id: UUID, audio_settings: RenderAudioSettings | None = None
+) -> JobCreated:
     project = session.scalar(select(Project).where(Project.id == project_id).with_for_update())
     if project is None:
         raise ProjectNotFoundError
@@ -477,6 +554,9 @@ def enqueue_render_job(session: Session, project_id: UUID) -> JobCreated:
     ).limit(1))
     if active_job is not None:
         raise RenderError("Another Project Job is active; wait for it to finish before rendering.")
+    settings = audio_settings or RenderAudioSettings(
+        mode="fixed", background_gain=get_render_original_audio_gain()
+    )
     _load_render_snapshot(session, project_id)
     job = Job(
         project_id=project_id,
@@ -484,6 +564,7 @@ def enqueue_render_job(session: Session, project_id: UUID) -> JobCreated:
         input_revision=project.current_revision,
         status=JobStatus.QUEUED.value,
         stage="queued",
+        audio_settings=settings.model_dump(mode="json"),
     )
     session.add(job)
     session.flush()
@@ -503,7 +584,14 @@ def render_project(
         job = session.get(Job, job_id)
         if job is None or job.status != JobStatus.RUNNING.value or job.operation_type != "render":
             raise RenderError("Render Job is no longer available.")
-        snapshot = _load_render_snapshot(session, project_id, ignore_active_job_id=job_id)
+        try:
+            job_settings = RenderAudioSettings.model_validate(job.audio_settings)
+        except ValueError as error:
+            raise RenderError("The queued render audio settings are invalid.") from error
+        snapshot = _load_render_snapshot(
+            session, project_id, ignore_active_job_id=job_id,
+            audio_settings_override=job_settings,
+        )
         if job.input_revision != input_revision or snapshot.revision != input_revision:
             raise RenderError("Project revision changed before rendering started.")
 
@@ -517,7 +605,7 @@ def render_project(
         actual_duration_ms = render_media(snapshot, output, filter_script_path=filter_script)
         stage_callback("verifying_render")
         metadata = {
-            "version": "timeline-render-v1",
+            "version": "timeline-render-v2",
             "project_id": str(project_id),
             "job_id": str(job_id),
             "input_revision": input_revision,
@@ -528,7 +616,7 @@ def render_project(
             "render_sha256": _sha256_file(output),
             "duration_tolerance_ms": RENDER_DURATION_TOLERANCE_MS,
             "original_audio_included": snapshot.source_has_audio,
-            "original_audio_gain": snapshot.original_audio_gain if snapshot.source_has_audio else 0,
+            "audio_settings": snapshot.audio_settings.model_dump(mode="json"),
             "video_encoder": "libx264",
             "audio_encoder": "aac",
             "stretch_operations": [operation.model_dump(mode="json") for operation in snapshot.plan.stretch_operations],
@@ -559,7 +647,10 @@ def render_project(
                 Artifact.media_type == TTS_MEDIA_TYPE,
                 Artifact.is_current.is_(True),
             ).order_by(Artifact.id).with_for_update()).all()
-            current_snapshot = _load_render_snapshot(session, project_id, ignore_active_job_id=job_id)
+            current_snapshot = _load_render_snapshot(
+                session, project_id, ignore_active_job_id=job_id,
+                audio_settings_override=job_settings,
+            )
             if (
                 project is None or job is None or job.status != JobStatus.RUNNING.value
                 or project.current_revision != input_revision
@@ -605,7 +696,7 @@ def _read_render_metadata(path: Path) -> dict[str, object] | None:
         payload = json.loads(path.with_name("render.json").read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
-    return payload if isinstance(payload, dict) and payload.get("version") == "timeline-render-v1" else None
+    return payload if isinstance(payload, dict) and payload.get("version") in {"timeline-render-v1", "timeline-render-v2"} else None
 
 
 def get_current_render(
@@ -651,10 +742,35 @@ def get_current_render(
     ):
         raise LookupError
     try:
-        current = _load_render_snapshot(session, project_id)
+        audio_settings = RenderAudioSettings.model_validate(
+            metadata.get("audio_settings") or {
+                "mode": "fixed",
+                "background_gain": metadata.get("original_audio_gain", 0),
+            }
+        )
+    except ValueError:
+        raise LookupError from None
+    try:
+        published_settings = RenderAudioSettings.model_validate(
+            job.audio_settings if job.audio_settings else {
+                "mode": "fixed", "background_gain": metadata.get("original_audio_gain", 0.10),
+            }
+        )
+        current = _load_render_snapshot(
+            session, project_id, audio_settings_override=published_settings,
+        )
     except (ProjectNotFoundError, RenderError):
         raise LookupError from None
-    if current.fingerprint != artifact.provenance_fingerprint:
+    if metadata.get("version") == "timeline-render-v1":
+        try:
+            expected_fingerprint = _legacy_render_fingerprint(
+                current, float(metadata.get("original_audio_gain", 0.10))
+            )
+        except (TypeError, ValueError):
+            raise LookupError from None
+    else:
+        expected_fingerprint = current.fingerprint
+    if expected_fingerprint != artifact.provenance_fingerprint:
         raise LookupError
     planned = metadata.get("planned_duration_ms")
     if not isinstance(planned, int) or planned <= 0:
@@ -669,5 +785,6 @@ def get_current_render(
         preview_url=f"/api/projects/{project_id}/rendered-video/preview",
         download_url=f"/api/projects/{project_id}/rendered-video/download",
         current=True,
+        audio_settings=audio_settings,
     ), path
 
