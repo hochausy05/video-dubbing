@@ -108,6 +108,15 @@ class ProjectViewerApiTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/projects/{missing_id}/segments").status_code, 404)
         self.assertEqual(self.client.get(f"/projects/{missing_id}/video").status_code, 404)
 
+    def test_joint_timeline_job_result_is_project_scoped(self) -> None:
+        missing_id = uuid.uuid4()
+        job_id = uuid.uuid4()
+        response = self.client.get(
+            f"/projects/{missing_id}/av-sync-optimization-jobs/{job_id}"
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "Project not found.")
+
     def test_video_is_canonical_and_supports_http_range(self) -> None:
         source = self.storage_root.joinpath(*source_relative_path(PROJECT_ID).parts)
         source.parent.mkdir(parents=True)
@@ -264,6 +273,40 @@ class ProjectViewerApiTests(unittest.TestCase):
         self.assertEqual(result.status_code, 409)
         with Session(self.engine) as session:
             self.assertIsNone(session.get(Segment, segment_id).translated_text)
+
+    def test_translation_retry_queues_existing_untouched_transcript_only(self) -> None:
+        with Session(self.engine) as session, session.begin():
+            for segment in session.scalars(select(Segment).where(Segment.project_id == PROJECT_ID)):
+                segment.translated_text = None
+        result = self.client.post(f"/projects/{PROJECT_ID}/translation-retry-jobs")
+        self.assertEqual(result.status_code, 202, result.text)
+        payload = result.json()
+        self.assertEqual(payload["status"], "queued")
+        with Session(self.engine) as session:
+            job = session.get(Job, uuid.UUID(payload["id"]))
+            self.assertEqual(job.operation_type, "translate_existing")
+            rows = session.scalars(select(Segment).where(
+                Segment.project_id == PROJECT_ID
+            ).order_by(Segment.position)).all()
+            self.assertEqual([row.id for row in rows], [
+                uuid.UUID("00000000-0000-0000-0000-000000000001"),
+                uuid.UUID("00000000-0000-0000-0000-000000000002"),
+            ])
+            self.assertEqual([row.source_text for row in rows], ["first", "second"])
+            self.assertEqual([row.translated_text for row in rows], [None, None])
+        self.assertEqual(
+            self.client.post(f"/projects/{PROJECT_ID}/translation-retry-jobs").status_code,
+            409,
+        )
+
+    def test_translation_retry_refuses_saved_translation(self) -> None:
+        result = self.client.post(f"/projects/{PROJECT_ID}/translation-retry-jobs")
+        self.assertEqual(result.status_code, 409)
+        with Session(self.engine) as session:
+            self.assertEqual(
+                session.scalar(select(Job.id).where(Job.operation_type == "translate_existing")),
+                None,
+            )
 
 
 if __name__ == "__main__":

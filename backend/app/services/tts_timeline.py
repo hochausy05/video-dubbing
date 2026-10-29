@@ -7,7 +7,6 @@ import math
 import subprocess
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
-from pathlib import Path, PurePosixPath
 from typing import Iterable
 from uuid import UUID
 
@@ -15,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_edge_tts_voice
-from app.models import Artifact, Job, JobStatus, Project, Segment
+from app.models import Artifact, Project, Segment
 from app.schemas.readiness import TTSReadiness
 from app.schemas.timeline import (
     PlannedSegmentTiming,
@@ -23,8 +22,7 @@ from app.schemas.timeline import (
     TimelineStretchOperation,
     TTSTimelinePlan,
 )
-from app.services.tts import TTS_MEDIA_TYPE, adaptive_rate_percent, translation_fingerprint
-from app.services.audio_normalization import read_normalization_metadata
+from app.services.tts_artifacts import TTS_MEDIA_TYPE, TTSArtifactError, validate_segment_tts_artifact
 from app.services.tts_readiness import ProjectNotFoundError, validate_project_tts_readiness
 from app.services.uploads import UploadStorageError, resolve_storage_path, source_relative_path
 
@@ -236,13 +234,6 @@ def compute_timeline_plan(
     )
 
 
-def _seconds_to_ms(value: Decimal) -> int | None:
-    milliseconds = Decimal(value) * 1000
-    if not milliseconds.is_finite() or milliseconds < 0 or milliseconds != milliseconds.to_integral_value():
-        return None
-    return int(milliseconds)
-
-
 def _probe_source_video_duration_ms(project: Project) -> int:
     canonical = source_relative_path(project.id)
     if project.source_media_reference != canonical.as_posix():
@@ -350,78 +341,20 @@ def build_project_timeline_plan(
 
     timeline_inputs: list[TimelineSegmentInput] = []
     for segment in segments:
-        candidates = artifacts_by_segment.get(segment.id, [])
-        if len(candidates) != 1:
-            code = "tts_artifact_missing" if not candidates else "tts_artifact_ambiguous"
-            issues.append(_issue(code, "Exactly one current TTS Artifact is required for every Segment.", segment.id))
-            continue
-        artifact = candidates[0]
-        if artifact.project_id != segment.project_id or artifact.revision != project.current_revision:
-            issues.append(_issue("tts_artifact_association_invalid", "TTS Artifact Project, Segment, or revision association is invalid.", segment.id))
-            continue
-        if artifact.duration_ms is None or artifact.duration_ms <= 0:
-            issues.append(_issue("tts_duration_invalid", "Persisted TTS duration must be positive milliseconds.", segment.id))
-            continue
-        job = session.get(Job, artifact.job_id)
-        if (
-            job is None or job.project_id != project_id
-            or job.operation_type not in {"tts", "tts_optimize", "tts_normalize"}
-            or job.status != JobStatus.SUCCEEDED.value
-            or job.stage not in {"tts_ready", "tts_optimization_complete", "tts_normalization_complete"}
-            or job.input_revision != project.current_revision
-        ):
-            issues.append(_issue("tts_job_incomplete", "TTS Artifact must belong to a completed current-revision TTS Job.", segment.id))
-            continue
-        expected_reference = f"projects/{project_id}/jobs/{job.id}/tts/{segment.id}.mp3"
-        if artifact.storage_reference != expected_reference:
-            issues.append(_issue("tts_artifact_path_invalid", "TTS Artifact storage association is invalid.", segment.id))
-            continue
         try:
-            audio_path = resolve_storage_path(PurePosixPath(expected_reference))
-            if not audio_path.is_file():
-                raise ValueError
-        except (UploadStorageError, OSError, ValueError):
-            issues.append(_issue("tts_audio_missing", "Generated audio file is unavailable for a Segment.", segment.id))
-            continue
-        if job.operation_type == "tts_normalize":
-            metadata = read_normalization_metadata(audio_path)
-            if metadata is None or metadata.get("final_duration_ms") != artifact.duration_ms:
-                issues.append(_issue("tts_artifact_normalization_invalid", "Normalized TTS media metadata is unavailable or inconsistent.", segment.id))
-                continue
-
-        if (
-            configured_voice is None or not segment.translated_text
-            or artifact.voice != configured_voice
-        ):
-            issues.append(_issue("tts_artifact_stale", "TTS Artifact does not match the current translation or voice.", segment.id))
-            continue
-        try:
-            start_ms = _seconds_to_ms(segment.start_seconds)
-            end_ms = _seconds_to_ms(segment.end_seconds)
-            rate = artifact.rate_percent
-            adaptive_rate_percent(
-                segment.translated_text,
-                Decimal(segment.end_seconds) - Decimal(segment.start_seconds),
+            valid = validate_segment_tts_artifact(
+                session, project, segment, artifacts_by_segment.get(segment.id, []),
+                configured_voice, resolve_audio=resolve_storage_path,
             )
-        except (ValueError, ArithmeticError):
-            start_ms = end_ms = None
-            rate = -1
-        if (
-            start_ms is None or end_ms is None or end_ms <= start_ms
-            or rate not in {0, 6, 12, 14, 20, 22, 35}
-            or artifact.provenance_fingerprint != translation_fingerprint(
-                segment.translated_text, configured_voice, rate
-            )
-        ):
-            issues.append(_issue("tts_artifact_stale", "TTS Artifact does not match the current translation, timestamps, voice, and rate.", segment.id))
+        except TTSArtifactError as error:
+            issues.append(_issue(error.code, str(error), segment.id))
             continue
-
         timeline_inputs.append(TimelineSegmentInput(
             segment_id=segment.id,
             position=segment.position,
-            original_start_ms=start_ms,
-            original_end_ms=end_ms,
-            tts_audio_duration_ms=(duration_overrides_ms or {}).get(segment.id, artifact.duration_ms),
+            original_start_ms=valid.start_ms,
+            original_end_ms=valid.end_ms,
+            tts_audio_duration_ms=(duration_overrides_ms or {}).get(segment.id, valid.artifact.duration_ms),
         ))
 
     known_segment_ids = {segment.id for segment in segments}

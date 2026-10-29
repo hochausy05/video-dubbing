@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -24,7 +25,7 @@ EDGE_TTS_CONCURRENCY_ENV = "EDGE_TTS_CONCURRENCY"
 TTS_OPTIMIZATION_MAX_RATE_ENV = "TTS_OPTIMIZATION_MAX_RATE_PERCENT"
 TTS_OPTIMIZATION_MAX_ATTEMPTS_ENV = "TTS_OPTIMIZATION_MAX_ATTEMPTS"
 RENDER_ORIGINAL_AUDIO_GAIN_ENV = "RENDER_ORIGINAL_AUDIO_GAIN"
-DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_EDGE_TTS_VOICE = "vi-VN-HoaiMyNeural"
 DEFAULT_TRANSLATION_BATCH_SIZE = 40
 DEFAULT_TRANSLATION_INPUT_TOKEN_BUDGET = 262_144
@@ -116,7 +117,7 @@ def get_gemini_api_key() -> str:
     load_local_environment()
     api_key = os.getenv(GEMINI_API_KEY_ENV)
     if not api_key or not api_key.strip():
-        raise RuntimeError("GEMINI_API_KEY must be configured in the local environment.")
+        raise RuntimeError("GEMINI_API_KEY must be configured in the root .env or process environment.")
     return api_key.strip()
 
 
@@ -124,7 +125,7 @@ def get_gemini_model() -> str:
     """Return the centrally configured Gemini model identifier."""
     load_local_environment()
     model = os.getenv(GEMINI_MODEL_ENV, DEFAULT_GEMINI_MODEL).strip()
-    if not model or len(model) > 100 or any(character.isspace() for character in model):
+    if not model or len(model) > 100 or re.fullmatch(r"[A-Za-z0-9._/-]+", model) is None:
         raise RuntimeError("GEMINI_MODEL must be a non-empty model identifier.")
     return model
 

@@ -59,3 +59,49 @@ class TTSTimelinePlan(BaseModel):
     issues: list[TimelinePlanningIssue]
     segments: list[PlannedSegmentTiming]
     stretch_operations: list[TimelineStretchOperation]
+
+
+class JointVideoInterval(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_start_us: int
+    source_end_us: int
+    output_start_us: int
+    output_end_us: int
+    speed: float
+
+
+class JointSegmentTiming(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    segment_id: UUID
+    position: int
+    artifact_id: UUID
+    source_start_us: int
+    source_end_us: int
+    source_window_end_us: int
+    rate_percent: int
+    measured_audio_duration_us: int
+    output_audio_start_us: int
+    output_audio_end_us: int
+    video_speed: float
+    signed_slack_us: int
+
+
+class JointTimelinePlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_version: Literal["av-sync-v1"] = "av-sync-v1"
+    project_id: UUID
+    project_revision: int
+    source_video_sha256: str | None = None
+    source_video_duration_us: int
+    planned_output_duration_us: int
+    segments: list[JointSegmentTiming]
+    video_intervals: list[JointVideoInterval]
+    blocking_issues: list[TimelinePlanningIssue]
+    joint_feasible: bool
+    coverage_precision_verified: bool
+    coverage_margin_us: int
+    renderer_supported: bool = False
+    renderable: bool = False

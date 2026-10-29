@@ -420,3 +420,147 @@
 - **Verification:** 16 focused translation unit tests passed using mocked Gemini responses; the 267-Segment case persisted one complete set from one mocked request under explicit budgets. Python `compileall`, `pip check`, and `git diff --check` passed. No real Gemini request, Supabase access, Project/media mutation, or frontend change was made.
 - **Result/limits:** Functional request planning and integrity safeguards are covered by deterministic tests. Local UTF-8 byte estimates are conservative proxies rather than provider tokenization; model-specific limits must be configured lower when needed. Real translation quality remains unverified.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `TRANS-03-FIX` — Gemini 503/504 diagnosis preparation
+
+- **AI assistance:** Compared current Gemini client/request settings with the pre-TRANS-03 Git revision and added an opt-in diagnostic script for plain text, minimal structured JSON, and the current TRANS-03 prompt using one synthetic Segment. The script reports safe status/category/timing/model metadata and does not access Project rows or print credentials, prompts, or provider payloads.
+- **Developer decision:** Do not send live Gemini requests without explicit approval. Do not change the translation algorithm without a reproduced cause. Preserve existing ID validation, no-fallback behavior, batching, and atomic persistence.
+- **Affected areas:** `backend/scripts/diagnose_gemini_requests.py` and append-only audit logs.
+- **Verification:** 16 focused translation unit tests passed; backend `compileall`, `pip check`, and `git diff --check` passed. The script's no-confirmation guard was exercised and made no live calls. No live provider test or Project/database access was performed.
+- **Result/limits:** The configured model (`gemini-3.8-flash`) and structured response schema were present before TRANS-03. The current SDK timeout is 120,000 ms; SDK retry is capped at one attempt, leaving the bounded application retry to account for the two observed attempts. AFC wrapper behavior may default on, but no tools/functions are configured and it does not add requests. The 503/504 failure remains unreproduced; the three live diagnostics await explicit approval.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `GEMINI-FIX` — Gemini access, safe diagnostics, and transcript-only retry
+
+- **AI assistance:** Kept environment loading centralized at the repository root with OS overrides, added safe model discovery and an explicitly gated minimal generation probe, added pre-ASR configured-model availability validation, exposed sanitized provider status/reason/model/retryability through Job-safe errors, and added a transcript-only retry Job that reuses the existing transactional translation service without invoking Whisper.
+- **Developer decision:** Preserve the current model default and do not auto-switch. Do not make paid generation requests without explicit approval. Retain TRANS-03 contextual Bulk-First behavior, strict ID validation, no source fallback, and all-or-nothing persistence. Reject translation retry when persisted Segments contain translations/edits or do not match the current Project revision.
+- **Affected areas:** Gemini configuration example, translation service and worker, Project API, diagnostic CLI, task/architecture records, and focused unit tests.
+- **Verification:** All 131 backend unit tests passed; Python `compileall`, `pip check`, and `git diff --check` passed. Offline tests cover environment resolution/overrides, model-list filtering, safe HTTP error handling, pre-ASR failure, and retry dispatch without Whisper. The active resolved model ID was read without exposing the API key. No live Gemini request or Project/media mutation was performed.
+- **Result/limits:** Current environment resolves `gemini-3.5-flash-lite`; user-reported 403/404/503/504 failures were not reproduced. Model discovery command: `cd backend; .\.venv\Scripts\python.exe scripts\gemini_diagnostics.py list`. A single minimal generation probe remains behind `--confirm-live` and requires developer approval. No claim that Gemini has been fixed is made.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `GEMINI-FIX-02` — Investigate generation 403/404 and disable unused AFC
+
+- **AI assistance:** Compared Google Gen AI SDK 2.28.0 client initialization and request paths. Explicitly selected the Gemini Developer API (`vertexai=False`, `v1beta`), disabled client-side AFC for translation and minimal diagnostic requests with no tools, and extended safe provider error extraction to include structured Google SDK status/reason/message with credential, link, and payload redaction. Clarified the worker catalog check does not prove inference entitlement.
+- **Developer decision:** Do not change the model default, add fallback, alter TRANS-03, or send paid provider requests. Treat `models.list` results as catalog metadata only. Escalate the unresolved 403/404 to Google project/key access and model entitlement review.
+- **Affected areas:** Translation client/service, diagnostic command, worker pre-ASR catalog stage, focused tests, architecture/task records, and append-only audit logs.
+- **Verification:** 27 focused translation, diagnostic, and transcript-retry unit tests passed; backend `compileall` and `pip check` passed. Runtime inspection confirmed Gemini Developer API base URL, `v1beta`, 120,000 ms timeout, no Vertex/Enterprise flags, and no proxy environment variables. SDK source inspection confirmed `models.list` and `generateContent` share the client/base/version but call distinct GET and POST paths. No live Gemini call or Project mutation was performed.
+- **Result/limits:** The user-provided 403 `PERMISSION_DENIED` and 404 `NOT_FOUND` for catalog-listed models are consistent with Google-side project/API entitlement or model access restrictions; the project’s AI Studio/billing/key status was not accessible here, so the exact account state is unverified. A successful generation request is still required before calling the integration fixed.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `GEMINI-FIX` — Live Gemini acceptance and current worker restart
+
+- **AI assistance:** Identified the stale AutoDub worker process tree from its module command, executable paths, working directory, and the prior unsupported-operation failure. Stopped only that idle worker, launched the current repository worker from `backend/.venv`, verified its imported module path and `translate_existing` dispatch, then monitored one authorized translation-only Job.
+- **Developer decision:** Authorize one live translation acceptance test with the configured Free Tier key and `gemini-3.5-flash-lite`. Do not submit another Job if this attempt fails; do not use Whisper or alter other Projects.
+- **Affected areas:** `TASKS.md` and append-only verification logs; no application implementation or schema changes in this close-out.
+- **Verification:** The actual FastAPI endpoint accepted Job `856d5093-88bc-4050-bbbb-37588bba1017` with HTTP 202. The separate worker completed `translate_existing` as `succeeded` / `translation_ready`; logs show one full-transcript request, one provider attempt, and 11 target Segments. A fresh SQLAlchemy engine/session confirmed all 11 translations are nonempty and mapped to the original IDs, while Segment IDs, ordering, timestamps, source text, and revisions remained unchanged. Other Projects' Segment data and Job counts were unchanged. The earlier stale-worker Job remained terminal; no Whisper ran. The worker started for this verification was stopped after completion.
+- **Result/limits:** GEMINI-FIX acceptance passed with the configured model and no fallback. Translation structure and ID mapping were verified; no separate linguistic quality review was performed. RESULT-01 and FLOW-01 remain pending.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `RESULT-01` — Render Artifact ownership and revision validation
+
+- **AI assistance:** Traced the existing render metadata, preview, and download routes through their shared current-Artifact resolver. Added explicit Project ownership, Artifact revision, Job ownership, Job input revision, succeeded status, and `render_complete` stage checks. Added integration coverage asserting all result routes reject invalid provenance.
+- **Developer decision:** Preserve the existing media generation pipeline and API URLs. Keep stale/missing results as safe 404 responses. Limit changes to read-time Artifact/Job provenance validation; do not modify TTS, timeline, audio mixing, render generation, media storage, or database schema.
+- **Affected areas:** Render Artifact validation, focused API integration tests, architecture/task documentation, and append-only logs.
+- **Verification:** `test_video_render.py` passed all 21 tests using synthetic local media and SQLite, including valid Range preview/download, stale source rejection, and mismatched Project/revision/Job cases. Backend `compileall`, `pip check`, and `git diff --check` passed. No frontend build was needed because the UI and API contract did not change.
+- **Result/limits:** RESULT-01 is complete. Existing `demo2` render browser acceptance remains the recorded real media evidence; this task did not rerun it or modify any Project. FLOW-01 is ready to begin with a permitted Project/media selection and fresh runtime-state check; it remains incomplete until the complete real integration flow is exercised.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `FLOW-01` — End-to-end integration acceptance investigation
+
+- **AI assistance:** Traced upload, worker dispatch, API lifecycle, media storage, timeline, and render Artifact flows. Inspected persisted Project/Job/Segment/Artifact data through SQLAlchemy and the real FastAPI read endpoints without changing Project data. Ran the full offline backend test suite.
+- **Developer decision:** Do not rerun Whisper, Gemini, Edge-TTS, or rendering without explicit live-run approval. Do not alter user-edited Segments, current Artifacts, or stale-result validation.
+- **Affected areas:** `TASKS.md` and append-only audit logs only; no implementation or architecture changes were made.
+- **Verification:** All 134 backend unit/integration tests passed; `compileall`, `pip check`, and `git diff --check` passed. Read-only checks on `demo2` found a valid stored source video, 11 current translated Segments, 11 current TTS Artifacts, and a successful historical render Job/MP4 (H.264/AAC, 23,681 ms; sidecar and digest matched). The live API served source/Segment/TTS data but returned 404 for rendered metadata/preview/download because the latest same-revision translation Job failed safely due to existing transcript edits; the timeline API reports `project_translation_not_ready`.
+- **Result/limits:** FLOW-01 remains partial. The previously rendered file exists and is internally verified, but current result delivery correctly withholds it under the present Job/readiness state. A fresh complete run requires permitted media and approval for real faster-whisper, Gemini, and Edge-TTS calls plus persisted verification records.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `FLOW-01` — Authorized live pipeline attempt
+
+- **AI assistance:** With explicit user authorization, copied the permitted `demo2` source video through the real FastAPI upload endpoint into a new verification Project, started the repository worker separately, and monitored the existing ASR/translation, TTS, timeline, and optimization workflows through persisted Job state and SQLAlchemy/API reads.
+- **Developer decision:** Do not alter `demo2` or other existing Projects. Permit one fresh live run using faster-whisper, the configured Gemini model, and Edge-TTS; do not submit another Job after the optimization failure and do not bypass timeline blockers.
+- **Affected areas:** `TASKS.md` and append-only logs only; no application implementation, schema, TTS/timeline/render module, or existing Project was changed.
+- **Verification:** Real upload returned HTTP 201. The separate worker completed the combined ASR/Gemini Job as `succeeded`/`translation_ready` with 11 valid persisted Segments; logs show one full-transcript Gemini request on `gemini-3.5-flash-lite`, one attempt, no retry. The real TTS Job completed `succeeded`/`tts_ready` with 11 current Artifacts. The authoritative timeline returned 6 stretch operations and 2 over-cap blockers (234 ms and 118 ms). One existing bounded optimization Job failed with the safe error `Vietnamese voice generation failed for a Segment.` Pre/post snapshots confirmed the failure preserved all 11 current Artifacts and Segment translation/timestamp data. Other Projects' Segment/Job counts were unchanged. No render Job or final video was produced. The complete 134-test backend suite, `compileall`, `pip check`, and `git diff --check` passed.
+- **Result/limits:** FLOW-01 remains partial because optimization failed and the planner still blocks rendering. No additional live requests were made after that failure.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `FLOW-01` — Optimization failure diagnosis and safe logging
+
+- **AI assistance:** Inspected the failed persisted optimization Job, current Project timeline, Segment-to-Artifact mapping, source files, worker code, and Edge-TTS retry/error handling. Added local diagnostic logging limited to exception class and integer HTTP status; provider exception text and payload remain excluded.
+- **Developer decision:** Preserve all current translations and TTS Artifacts, do not rerun Whisper/Gemini, and do not bypass the planner's 1.4× cap. Do not make another Edge-TTS request without a separate explicit approval.
+- **Affected areas:** `backend/app/services/tts.py`, focused TTS logging regression test, `TASKS.md`, and append-only logs.
+- **Verification:** SQLAlchemy read-only inspection confirmed the failed Job has only the generic safe error, current normalized Artifacts exist for all 11 Segments, and current blockers map to Segment positions 4 and 9 (234 ms and 118 ms excess). No corresponding worker log file or traceback was available. The focused 11-test TTS suite and complete 135-test backend suite passed; `compileall`, `pip check`, and `git diff --check` passed. No provider calls or Project/media mutations were performed.
+- **Result/limits:** The exact provider failure remains unknown because the original exception details were neither persisted nor locally logged. A single bounded optimization Job would target only the two blocker translations at rates 22% and 35%; the current code can make at most 12 Edge-TTS requests across the 4 possible syntheses and 3-attempt retry limit. It requires explicit approval. FLOW-01 remains partial; no render Job or MP4 exists for this verification Project.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `FLOW-01` — Authorized optimization attempt and stop condition
+
+- **AI assistance:** Started the current `backend/.venv` worker as a separate process, verified it acquired the PostgreSQL worker advisory lock, submitted the approved optimization Job for the verification Project, monitored its persisted state and local worker logs, then stopped that worker after failure.
+- **Developer decision:** One bounded Edge-TTS optimization Job was approved for positions 4 and 9 only (rates 22% and 35%, existing maximum three attempts per synthesis). No Gemini/Whisper calls, further retry Job, translation/timestamp edits, or render bypass were allowed.
+- **Affected areas:** `backend/app/services/tts.py`, its safe logging regression test, FLOW-01 task and append-only logs. No schema or unrelated Project was changed.
+- **Verification:** API returned HTTP 202 for Job `3b4f7433-e836-4997-806f-1fcb78de299f`. Worker log reported `NoAudioReceived` with no HTTP status; the Edge-TTS package raises this when a stream ends without audio data. The log lacked Segment identity, so the affected one of positions 4/9 cannot be known. Fresh SQLAlchemy verification showed all 11 prior TTS Artifacts remained current, no active Job, unchanged revision, and the same two planner blockers; rendered-video metadata/preview/download all returned 404. No MP4 was generated. The 135-test backend suite, `compileall`, `pip check`, and `git diff --check` passed.
+- **Result/limits:** Stop condition was honored; no further live request was made. The observation confirms an empty Edge-TTS audio stream but does not establish whether the cause was provider-side, request-specific, or transient. FLOW-01 remains partial.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `FLOW-01` — Bounded Edge-TTS recovery and deterministic optimization
+
+- **AI assistance:** Classified `NoAudioReceived` as an empty-stream transient exception and added it to the existing three-attempt backoff. Serialized optimization operations, tracked synthesis operations separately from provider request attempts, enforced a finite request ceiling from eligible Segments/rate tiers/retry cap, and added safe per-attempt attribution with candidate Artifact IDs that are reused for transactional publication.
+- **Developer decision:** Keep permanent 4xx/configuration failures non-retryable, preserve current Artifacts until all candidates and snapshots validate, do not alter timeline limits, and make no live Edge-TTS/Gemini/Whisper call without separate approval.
+- **Affected areas:** TTS synthesis/retry service, TTS optimization service, focused unit tests, architecture/task notes, and append-only logs. No schema change.
+- **Verification:** Focused TTS and optimization tests passed; complete backend suite passed (138 tests). Tests cover NoAudioReceived retry then success, three-attempt exhaustion, non-retryable 403/permanent errors, sequential two-Segment rate steps, 4-operation/12-request budget enforcement, Artifact ID attribution, old-Artifact preservation on failure, and stale-input rejection. `compileall`, `pip check`, and `git diff --check` passed. No provider calls or persisted Project changes were made.
+- **Result/limits:** Offline behavior is verified. FLOW-01 remains partial until the user approves one bounded live continuation on the existing verification Project and an actual render passes timeline, FFprobe, and API preview/range/download checks.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TTS-INCREMENTAL-01` — Safe incremental TTS regeneration
+
+- **AI assistance:** Added a shared strict current-Artifact validator and applied it to TTS selection, timeline planning and audio API validity. Implemented selective synthesis, exact preservation of reusable/optimized Artifacts, final snapshot and producer/file revalidation, atomic replacement publication and zero-change success without output files. Updated frontend messages and focused offline regression tests.
+- **Developer decision:** Keep the existing Project enqueue contract, revision requirements, configured voice, rate policy for changed text and render safety. Preserve all unrelated working-tree changes. No live providers, real Jobs, Project data changes, dependencies or schema changes were authorized or performed.
+- **Affected areas:** TTS Artifact validation/generation, timeline and Project audio reads, frontend messages, targeted tests, architecture/task notes and append-only logs.
+- **Verification:** Passed 86 TTS/timeline tests, 10 Project API tests and 21 render regression tests (117 relevant offline tests total); frontend build/typecheck, Python compile checks and `git diff --check` passed. A 272-Segment SQLite fixture with fake synthesis proves one edited translation generates one replacement while 271 Artifact IDs, paths, metadata, files, producer Jobs and optimized rates remain unchanged. Tests cover three edits, zero edits, +35% reuse, invalid/ambiguous inputs, mixed producers, revision safety, reuse revalidation, concurrent changes and database rollback.
+- **Result/limits:** COMPLETE against the requested offline definition of done. No real browser acceptance, provider recovery, PostgreSQL concurrency experiment or latency improvement is claimed. Existing legacy sidecar compatibility is retained; unassignable current Artifact associations fail safely. FLOW-01 remains partial.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `TIMELINE-UX-01` — Preserve last-known timeline blockers during edits
+
+- **AI assistance:** Traced timeline state through translation saves, analysis requests, and TTS/optimization/normalization Job completion. Updated the viewer to retain the last successful plan as a stale reference, validate successful replacement responses, preserve results/errors across reanalysis attempts, and navigate blockers by stable Segment ID with scroll, editor focus, and video seeking without autoplay. Updated architecture/task notes and append-only logs.
+- **Developer decision:** Keep timeline analysis in viewer memory only, make reanalysis explicit after audio changes, prevent stale results from enabling frontend optimization/render actions, and leave backend Artifact/render checks unchanged. No provider calls, real Jobs, media rendering, Project data changes, schema changes, or dependencies were authorized or performed.
+- **Affected areas:** `frontend/src/App.tsx`, timeline/Project API/render regression verification, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`.
+- **Verification:** `test_tts_timeline.py` (12 tests), `test_project_viewer_api.py` (10 tests), and `test_video_render.py` (21 tests) passed. `npm run build` passed, including TypeScript; `git diff --check` passed. The repository has no frontend component-test runner, so UI interactions were not browser-tested.
+- **Result/limits:** Offline implementation and checks are complete, but TIMELINE-UX-01 remains partial pending browser acceptance of edit retention, blocker navigation, and successful/failed reanalysis. Last-known analysis survives edits and Jobs only while the same Project Viewer remains open; Project navigation and browser refresh clear it. Existing backend planner and Artifact validation remain authoritative for optimization/render.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `AV-SYNC-03` — Execute joint timeline plans in FFmpeg
+
+- **AI assistance:** Extended the existing renderer to load and validate the latest successful current-revision `av-sync-v1` plan, execute its exact interval speeds and selected TTS Artifact mapping, and verify decoded source/output frame coverage and 48 kHz sample timing before atomic publication. Added a strict `timeline-render-v3` sidecar for joint plans and synthetic FFmpeg/SQLite regression coverage. Updated the AV-SYNC-02 source probe to base plan duration on decoded frame coverage and reserve a margin for two output frames at the 0.5× speed limit plus one sample.
+- **Developer decision:** Keep the legacy renderer compatible; reject stale/unsupported joint plans, blockers, invalid partitions, and negative slack. Do not use real Projects/providers or apply the PostgreSQL migration; keep broader FLOW-01 separate.
+- **Affected areas:** `backend/app/services/video_render.py`, `backend/app/services/av_sync_optimization.py`, focused render/optimization tests, `TASKS.md`, `docs/ARCHITECTURE.md`, and append-only logs.
+- **Verification:** 59 focused renderer, joint-planner, optimizer, legacy timeline, and audio-mixing tests passed. Synthetic FFmpeg executed 0.7×, 0.5×, and 1.0× plans, preserved decoded source-frame count, verified sample-aligned dub placement and strict frame/sample coverage, and exercised joint Job render publication/current-result retrieval. Python `compileall`, `pip check`, and `git diff --check` passed. No live providers, real Project, Supabase connection, or migration application was used.
+- **Result/limits:** COMPLETE for offline AV-SYNC-03 acceptance. No real application Project was rendered. The migration `backend/migrations/20261026_av_sync_02_joint_plan.sql` remains unapplied and PostgreSQL deployment validation remains outstanding under AV-SYNC-02.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `AV-SYNC-03` — Progress tracking consistency check
+
+- **AI assistance:** Reconciled the task status, changelog, architecture notes, and AI usage record with the implemented AV-SYNC-03 evidence; clarified that PostgreSQL migration validation is a deployment prerequisite and FLOW-01 remains separate.
+- **Developer decision:** Preserve prior changelog history, keep AV-SYNC-03 complete for its offline acceptance, and leave AV-SYNC-02/FLOW-01 limitations explicit. No implementation or migration changes were made in this documentation check.
+- **Affected areas:** `TASKS.md`, `docs/CHANGELOG.md`, and `docs/AI_USAGE.md`; architecture was reviewed and already reflected the renderer contract.
+- **Verification:** Confirmed the AV-SYNC-03 task entry is checked, the exact dated changelog heading exists, and the prior implementation record reports 59 passing focused tests plus `compileall`, `pip check`, and `git diff --check`. Tests were not rerun in this documentation-only pass; `git diff --check` was rerun.
+- **Result/limits:** Tracking is consistent. Real Project rendering and PostgreSQL migration validation remain unverified; AV-SYNC-02 remains partial and FLOW-01 is unchanged.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `AV-SYNC-02` — Joint TTS/video planning foundation
+
+- **AI assistance:** Implemented a deterministic joint timeline solver, typed `av-sync-v1` plan and Job result, conservative microsecond duration helper, project-scoped enqueue/result routes, sequential bounded TTS candidate synthesis, selected Artifact staging/transactional publication with snapshot revalidation, additive PostgreSQL migration, and focused offline planner/service tests. Added documentation describing the renderer compatibility gate and remaining verification limits.
+- **Developer decision:** Keep all provider calls and real Project changes out of scope; do not begin AV-SYNC-03. The new contract must never advertise a mathematically feasible plan as renderable while the active renderer supports only its existing plan.
+- **Affected areas:** Job/Artifact metadata, timeline schemas/services, Project API, worker dispatch, migration, tests and task/architecture logs.
+- **Verification:** `test_joint_timeline.py` (8), `test_av_sync_optimization.py` (4), `test_audio_normalization.py` (10), `test_project_viewer_api.py` (11), `test_video_render.py` (22), `test_tts_incremental.py` (25), and `test_tts_pipeline.py` (5) passed. Python `compileall` and `pip check` passed. No live providers, Project/media mutation, migration application or full render was performed.
+- **Result/limits:** PARTIAL. Candidate synthesis and selected Artifact publication have deterministic mocked tests, but real PostgreSQL migration/locking and FFprobe frame/sample coverage are unverified; the new joint contract is never renderable until AV-SYNC-03 implements its renderer support.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `AV-SYNC-03` — Final progress record
+
+- **AI assistance:** Appended the final tracking reconciliation after the older AV-SYNC-02 history entry, preserving existing log text and clarifying the current AV-SYNC-03 completion state and PostgreSQL deployment prerequisite.
+- **Developer decision:** AV-SYNC-03 is complete for offline acceptance; AV-SYNC-02 and FLOW-01 remain partial as recorded in `TASKS.md`. Do not start another task or apply the migration as part of this documentation check.
+- **Affected areas:** `docs/CHANGELOG.md`, `docs/AI_USAGE.md`, and the current-task pointer in `TASKS.md`. `docs/ARCHITECTURE.md` already describes the renderer/migration state and was not changed in this follow-up.
+- **Verification:** Confirmed the final dated changelog heading is at end of file, AV-SYNC-03 is checked in `TASKS.md`, AV-SYNC-02 is still partial, and the next prerequisite is stated. `git diff --check` passed; implementation tests were not rerun in this documentation-only follow-up.
+- **Result/limits:** Progress tracking is consistent. The recorded 59-test offline result remains the implementation evidence; real Project and PostgreSQL/Supabase verification are outstanding.
+- **Commit/issue:** None recorded by the AI assistant.

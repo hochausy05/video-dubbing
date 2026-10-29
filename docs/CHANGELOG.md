@@ -2,7 +2,7 @@
 
 ## 2026-09-08 — INIT-01: Khởi tạo tài liệu dự án
 
-- **Trạng thái:** Hoàn thành
+- **Trạng thái:** Một phần
 - **Thay đổi:** Tạo tài liệu tổng quan, kế hoạch, quy tắc, danh sách nhiệm vụ và kiến trúc dự kiến ban đầu.
 - **Tệp:** `README.md`, `PLAN.md`, `RULES.md`, `TASKS.md`, `docs/ARCHITECTURE.md`
 - **Kiểm chứng:** Đã kiểm tra sự tồn tại của tệp, liên kết nội bộ và trạng thái chưa triển khai ứng dụng.
@@ -407,3 +407,133 @@
 - **Tệp:** `backend/app/services/translation.py`, `backend/app/core/config.py`, `.env.example`, `tests/unit/test_translation.py`, `docs/LEGACY_PARITY_AUDIT.md`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
 - **Kiểm chứng:** 16 translation unit test đạt, gồm kiểm thử mock cho bulk 267 Segment với ngân sách cấu hình cho phép, batching theo giới hạn input/output, context chỉ đọc, ID/timestamp, rollback giao dịch, bản dịch đã sửa, quota/transient retry và cấu hình SDK. `compileall`, `pip check` và `git diff --check` đạt. Không gửi request Gemini, không dịch lại Project thật và không sửa dữ liệu/media.
 - **Còn lại:** Chưa xác nhận chất lượng bản dịch thực tế hoặc cải thiện tiếng Việt. Ước lượng token cục bộ dựa trên byte UTF-8, không phải tokenizer của provider; cấu hình cần giảm nếu dùng model có giới hạn thấp hơn. So sánh đầu ra thật thuộc TRANS-04 và cần phê duyệt rõ trước khi thay đổi bản dịch lưu trữ.
+
+## 2026-10-25 — TRANS-03-FIX: Chẩn đoán lỗi Gemini 503/504
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** So sánh cấu hình và request hiện tại với phiên bản trước TRANS-03; thêm script chẩn đoán opt-in gồm ba request độc lập: plain text, JSON tối thiểu và prompt TRANS-03 với Segment tổng hợp. Script không truy cập Project/DB, không in khóa hoặc payload; cần cờ `--confirm-live` mới gửi request.
+- **Tệp:** `backend/scripts/diagnose_gemini_requests.py`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Xác nhận model mặc định `gemini-3.8-flash` và schema structured response đã có trước TRANS-03; timeout SDK hiện tại là 120.000 ms và retry SDK giới hạn một lần gọi, phù hợp hai lần thử do retry ứng dụng. AFC wrapper có thể được SDK bật mặc định nhưng không có tool/function khai báo nên không tạo thêm lời gọi; cách cấu hình này cũng tồn tại trước TRANS-03. 16 translation unit test, `compileall`, `pip check` và `git diff --check` đạt. Chỉ chạy chế độ guard không có cờ xác nhận; không gửi request Gemini.
+- **Còn lại:** Chưa tái hiện 503/504 nên chưa xác nhận nguyên nhân hoặc thay đổi hành vi dịch. Chạy ba chẩn đoán trực tiếp cần phê duyệt riêng; lệnh từ thư mục `backend`: `\.venv\Scripts\python.exe scripts\diagnose_gemini_requests.py --confirm-live`.
+
+## 2026-10-25 — GEMINI-FIX: Khám phá model và xử lý lỗi Gemini an toàn
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Giữ cấu hình chỉ đọc `.env` ở repository root và ưu tiên biến môi trường của tiến trình; cập nhật mẫu cấu hình để yêu cầu chọn model từ danh sách có quyền `generateContent`. Thêm lệnh liệt kê model và lệnh gửi một request text tối thiểu có cờ xác nhận. Worker kiểm tra model đã cấu hình trước ASR. Job lỗi Gemini lưu thông báo an toàn, có model, HTTP status/reason khi SDK cung cấp và khả năng retry, không lưu payload thô. Thêm `POST /projects/{project_id}/translation-retry-jobs` cho transcript hiện hành hợp lệ, chưa có bản dịch/chỉnh sửa; worker dùng lại dịch vụ dịch nguyên tử và bỏ qua Whisper. Không đổi schema, dependency hoặc model mặc định.
+- **Tệp:** `.env.example`, `TASKS.md`, `backend/app/core/config.py`, `backend/app/services/translation.py`, `backend/app/workers/job_worker.py`, `backend/app/api/projects.py`, `backend/scripts/gemini_diagnostics.py`, `tests/unit/test_translation.py`, `tests/unit/test_gemini_diagnostics.py`, `tests/unit/test_translation_retry.py`, `tests/unit/test_project_viewer_api.py`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 131 backend unit test đạt; `compileall`, `pip check` và `git diff --check` đạt. Kiểm thử xác nhận root `.env` và process overrides, model-list filtering, phân loại 400/403/404/429/5xx cùng thông báo không lộ payload, model access preflight trước ASR, và translation-only retry không gọi Whisper/không ghi đè Segment. Cấu hình runtime phân giải model `gemini-3.5-flash-lite`; khóa chỉ được kiểm tra có cấu hình và không in ra. Không gọi API Gemini trực tiếp, không thay đổi Project/media và không đổi model mặc định.
+- **Còn lại:** Chưa xác nhận model nào hoạt động bằng danh sách API thực hoặc generation thành công; HTTP 503/504/403 do người dùng báo chưa được tái hiện. Lệnh liệt kê từ thư mục `backend`: `\.venv\Scripts\python.exe scripts\gemini_diagnostics.py list`. Probe generation một request cần phê duyệt: `\.venv\Scripts\python.exe scripts\gemini_diagnostics.py test --model <MODEL_ID> --confirm-live`. GEMINI-FIX chưa hoàn tất cho đến khi model truy cập được và generation thực thành công.
+
+## 2026-10-25 — GEMINI-FIX-02: Điều tra lỗi 403/404 và tắt AFC không cần thiết
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Ép `genai.Client` dùng Gemini Developer API với `v1beta`; giữ base URL mặc định của SDK và timeout/retry hiện có. Tắt rõ AFC phía client cho request không khai báo tools; SDK không serialize tùy chọn AFC này vào payload provider. Chẩn đoán giữ status, reason và provider message lấy từ `APIError` nhưng khử credential/link/payload nhạy cảm. Cập nhật kiểm tra trước ASR để chỉ nói chính xác đây là model-catalog check, không xác nhận entitlement.
+- **Tệp:** `backend/app/services/translation.py`, `backend/scripts/gemini_diagnostics.py`, `backend/app/workers/job_worker.py`, `tests/unit/test_translation.py`, `tests/unit/test_gemini_diagnostics.py`, `tests/unit/test_translation_retry.py`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Xác nhận từ SDK 2.28.0 và client runtime rằng catalog dùng `GET /v1beta/models`, generate dùng `POST /v1beta/models/{id}:generateContent`; cùng base `https://generativelanguage.googleapis.com/`, cùng key/client. `vertexai=False`, API `v1beta`, timeout 120.000 ms; không có cờ Vertex/Enterprise hoặc proxy env var trong môi trường kiểm tra. Xác nhận SDK AFC wrapper mặc định phát cảnh báo khi không có tools nhưng vẫn chỉ gửi một request; regression test xác nhận explicit disable không phát warning. 27 translation/diagnostic/retry unit test đạt; `compileall` và `pip check` đạt. Không gọi live Gemini.
+- **Còn lại:** Google xác nhận `models.list` không kiểm tra inference entitlement/billing; 403 `PERMISSION_DENIED` phù hợp quyền API key/project, tier, billing hoặc trạng thái hạn chế. Model 2.5 Flash-Lite có giới hạn quyền truy cập cho một số project, nhưng chưa đủ dữ liệu để xác định chính xác nguyên nhân của 404 `NOT_FOUND` trên project này. Cần kiểm tra project gắn với API key, quyền Gemini API, trạng thái trong AI Studio, billing/payment và quyền truy cập model; sau đó cần generation thành công để đóng GEMINI-FIX. Không đổi model mặc định, không thêm fallback, không sửa TRANS-03 và không chạy request có phí.
+
+## 2026-10-25 — GEMINI-FIX: Hoàn tất nghiệm thu Gemini live và worker dịch transcript
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Khởi động worker hiện hành từ `backend/.venv` sau khi xác định và dừng worker cũ không nhận biết `translate_existing`. Chạy một lần dịch transcript-only trên Project đủ điều kiện; giữ nguyên model `gemini-3.5-flash-lite`, không gọi Whisper và không đổi schema.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Endpoint thật trả HTTP 202 trong 1.866 ms cho Job `856d5093-88bc-4050-bbbb-37588bba1017`; worker riêng ghi nhận một request toàn transcript, một lần thử và hoàn tất `translation_ready`. SQLAlchemy session/engine mới xác nhận đủ 11 Segment có bản dịch tiếng Việt không rỗng; ID, thứ tự, timestamp, source text và revision giữ nguyên. Dữ liệu Segment và số Job của các Project khác không đổi. Job thử trước `f206dbfa-b134-42ce-ad74-cb7e5f60a2e8` vẫn ở trạng thái thất bại terminal và không làm thay đổi transcript.
+- **Còn lại:** Không còn tiêu chí GEMINI-FIX chưa đạt. Không đánh giá chất lượng ngôn ngữ ngoài việc xác nhận kết quả không rỗng và ánh xạ theo Segment ID; nội dung này thuộc TRANS-04/QA-05.
+
+## 2026-10-25 — RESULT-01: Kiểm tra Artifact render theo Project, revision và Job
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Bổ sung kiểm tra rõ ràng rằng render Artifact và Job cùng thuộc Project được yêu cầu, cùng revision hiện tại, và Job đã thành công ở stage `render_complete`. Metadata, preview và download tiếp tục dùng chung kiểm tra này; Artifact sai liên kết hoặc stale trả 404 an toàn.
+- **Tệp:** `backend/app/services/video_render.py`, `tests/unit/test_video_render.py`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 21 test trong `test_video_render.py` đạt; bao gồm metadata/preview/download hợp lệ, Range request, download, dữ liệu lưu bền, bản render stale và trường hợp sai Project/revision/Job status/stage. `compileall`, `pip check` và `git diff --check` đạt. Không sửa schema, frontend hoặc module TTS/timeline/audio/rendering.
+- **Còn lại:** RESULT-01 hoàn tất. Chưa chạy lại toàn bộ flow thật; FLOW-01 vẫn chờ nghiệm thu tích hợp riêng. Không thay đổi pipeline TTS, timeline, mixing audio hoặc thuật toán render.
+
+## 2026-10-25 — FLOW-01: Kiểm chứng tích hợp AutoDub
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Đối chiếu read-only luồng dữ liệu thật trên `demo2` từ Project/source video, Segment và Job đến TTS/Render Artifact; không sửa application logic hoặc dữ liệu.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Kết nối Supabase bằng SQLAlchemy xác nhận source H.264/AAC hợp lệ, 11 Segment hiện hành có timestamp/order/source text/translation hợp lệ, Job dịch thành công, 11 TTS Artifact hiện hành và Job render `succeeded`/`render_complete`. File render, sidecar, digest và FFprobe xác nhận H.264/AAC, 23,681 ms; Job ghi cùng planned/actual duration. API thật trả 200 cho Segment/audio, 206 cho Range source video, nhưng timeline bị chặn bởi Job `transcribe_translate` mới nhất thất bại với thông báo an toàn do transcript edit/revision; metadata/preview/download trả 404 theo kiểm tra stale hiện hành. 134 backend test đạt; `compileall`, `pip check`, `git diff --check` đạt. Không gửi request AI, không chạy worker, không thay đổi Project/media.
+- **Còn lại:** Chưa chạy một luồng end-to-end mới từ upload đến kết quả hiện hành. Cần media được phép dùng và phê duyệt riêng cho các lời gọi faster-whisper, Gemini, Edge-TTS cùng các thay đổi Project/Job/Artifact trong Supabase/managed storage. FLOW-01 chưa hoàn tất.
+
+## 2026-10-25 — FLOW-01: Kết quả lượt tích hợp live được phê duyệt
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Sau khi người dùng phê duyệt một lượt live và chọn bản sao nguồn `demo2`, tạo Project kiểm chứng mới qua API upload. Worker thật hoàn thành ASR/Gemini và Edge-TTS; không thay đổi Project nguồn.
+- **Tệp:** `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Upload trả HTTP 201; combined Job `9876f1f2-f045-4c46-9654-b15f4bcbe6ed` thành công ở `translation_ready` với 11 Segment hợp lệ, một request Gemini trên `gemini-3.5-flash-lite`, một lần thử và không retry. TTS Job `322da8df-01cd-403f-90af-533007fe7a4b` thành công với 11 Artifact. Timeline có 6 stretch operation nhưng còn 2 blocker (234 ms, 118 ms), planned duration 23,340 ms. Job tối ưu duy nhất thất bại với lỗi an toàn `Vietnamese voice generation failed for a Segment.` Snapshot xác nhận Segment/bản dịch/timestamp và 11 Artifact trước đó không đổi; các Project khác không đổi. Không tạo Render Job hoặc MP4.
+- **Còn lại:** FLOW-01 chưa đạt: cần xử lý nguyên nhân Edge-TTS optimization và giải quyết 2 blocker trước khi render; không gửi thêm request sau lượt đã được phê duyệt.
+
+## 2026-10-25 — FLOW-01: Điều tra lỗi optimization và bổ sung chẩn đoán an toàn
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Kiểm tra Job lỗi `83b64843-d13f-496c-be46-33db8cfc46ec`, dữ liệu Project kiểm chứng và luồng Edge-TTS. Job chỉ lưu lỗi an toàn, không có traceback/status provider; không tìm thấy log worker cục bộ cho Job. Bổ sung log chỉ gồm loại exception và HTTP status số, không ghi nội dung exception hoặc payload.
+- **Tệp:** `backend/app/services/tts.py`, `tests/unit/test_tts.py`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** SQLAlchemy xác nhận Project kiểm chứng vẫn có 11 Segment và 11 Artifact hiện hành với file/normalization metadata hợp lệ. Timeline vẫn có blocker ở Segment vị trí 4 và 9, vượt giới hạn lần lượt 234 ms và 118 ms. 11 test TTS tập trung và toàn bộ 135 backend test đạt; `compileall`, `pip check` và `git diff --check` đạt. Không gửi request Gemini/Edge-TTS, không thay Project/artifact, không tạo Render Job.
+- **Còn lại:** Chưa xác định nguyên nhân provider cụ thể của lần thất bại. Cần duyệt một lượt optimization có giới hạn cho hai Segment blocker; tối đa 4 lần tổng hợp (rate 22% và 35% cho mỗi Segment), tối đa 3 request Edge-TTS mỗi lần tổng hợp theo retry hiện hành. FLOW-01 vẫn một phần; không thể render khi planner còn blocker.
+
+## 2026-10-25 — FLOW-01: Optimization live thất bại với Edge-TTS không trả audio
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Chạy một Job optimization được duyệt trên Project kiểm chứng hiện tại bằng worker mới từ `backend/.venv`; dừng worker sau khi Job thất bại. Không gọi Whisper/Gemini, không thay đổi translation/Segment và không chạy render.
+- **Tệp:** `backend/app/services/tts.py`, `tests/unit/test_tts.py`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Endpoint enqueue trả HTTP 202 cho Job `3b4f7433-e836-4997-806f-1fcb78de299f`. Log ghi một lần lỗi `NoAudioReceived`, status HTTP không có; thư viện Edge-TTS ném lỗi này khi luồng kết thúc mà không nhận audio chunk. Không có Segment ID trong log nên không thể xác định liệu Segment vị trí 4 hay 9 gặp lỗi; cũng không thể kết luận nguyên nhân provider sâu hơn. Worker không retry lỗi này theo phân loại hiện hành. SQLAlchemy session mới xác nhận Job thất bại, không có Job hoạt động, revision 0, cả 11 Artifact hiện hành vẫn từ Job TTS thành công trước đó; timeline vẫn có hai blocker 234 ms/118 ms và không có render Artifact. Metadata, preview và download endpoint đều trả 404. 135 backend test đạt; `compileall`, `pip check`, `git diff --check` đạt.
+- **Còn lại:** FLOW-01 vẫn một phần. Không tạo MP4; Segment lỗi cụ thể và nguyên nhân upstream chưa xác định. Không gửi thêm request live sau Job đã duyệt.
+
+## 2026-10-25 — FLOW-01: Retry an toàn và tuần tự hóa TTS optimization
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Xem `NoAudioReceived` là lỗi transient có giới hạn 3 lần theo retry hiện có; giữ nguyên lỗi 4xx/permanent không retry. Optimization xử lý Segment theo thứ tự ổn định, tính và chặn ngân sách synthesis operation/request từ các rate còn khả dụng. Log an toàn gắn Segment ID, candidate Artifact ID, rate, attempt, loại exception và HTTP status số; Artifact ID được cấp trước và dùng lại khi publish. Generation vẫn transactional; lỗi hoặc stale input không thay Artifact hiện hành.
+- **Tệp:** `backend/app/services/tts.py`, `backend/app/services/tts_optimization.py`, `tests/unit/test_tts.py`, `tests/unit/test_tts_optimization.py`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Kiểm thử mock xác nhận `NoAudioReceived` retry thành công và dừng đúng lần 3; 403/permanent không retry; optimizer tuần tự và ánh xạ Segment/Artifact/rate chính xác; ngân sách 4 operation/12 attempts cho hai Segment có rate hiện tại +20%; retry thất bại giữ nguyên Artifact, và stale transcript vẫn không publish. 138 backend test đạt; `compileall`, `pip check`, `git diff --check` đạt. Không gửi Edge-TTS/Gemini/Whisper live và không thay dữ liệu Supabase.
+- **Còn lại:** FLOW-01 vẫn Partial. Cần phê duyệt một continuation live giới hạn trên Project kiểm chứng hiện tại; chỉ tiếp tục audio mixing/render cục bộ nếu timeline mới không còn blocker. Chưa có MP4.
+
+## 2026-10-25 — TTS-INCREMENTAL-01: Tái tạo audio tăng dần, giữ Artifact hợp lệ
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Backend phân loại audio tái sử dụng hoặc cần tạo lại bằng validator dùng chung với timeline và audio API; kiểm tra ownership, revision, producer Job/stage, voice/rate/fingerprint, file canonical, duration và normalization metadata áp dụng. Chỉ tổng hợp Segment thiếu/stale/không hợp lệ; giữ nguyên Artifact và rate tối ưu của Segment khác. Recheck snapshot và audio tái sử dụng trước transaction, chỉ supersede tập được thay thế; lỗi không publish một phần. Không thay đổi thì Job vẫn `succeeded/tts_ready`, không gọi Edge-TTS hoặc tạo output directory. Sửa thông báo frontend cho đúng hành vi incremental.
+- **Tệp:** `backend/app/services/tts_artifacts.py`, `backend/app/services/tts.py`, `backend/app/services/tts_timeline.py`, `backend/app/api/projects.py`, `frontend/src/App.tsx`, `tests/unit/test_tts_incremental.py`, `tests/unit/test_tts_pipeline.py`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 86 test TTS/timeline, 10 Project API test và 21 render regression test đạt (117 test offline); gồm fixture 272 Segment sửa một câu chỉ tạo một audio và giữ 271 Artifact, sửa ba câu tạo ba, không sửa tạo không, giữ rate +35%, mixed producer Jobs, stale/revision/ambiguous input, tái kiểm tra reuse và rollback khi DB insert thất bại. `npm run build` (gồm TypeScript), compile checks và `git diff --check` đạt. Không gọi provider, tạo Job thật hoặc thay dữ liệu Supabase; không đổi schema/dependency.
+- **Còn lại:** Chưa nghiệm thu trên webapp/Project thật hoặc đo latency. Artifact legacy giữ chính sách sidecar hiện có; association không thể gắn với Segment hiện hành dừng an toàn. FLOW-01 không đổi trạng thái.
+
+## 2026-10-26 — TIMELINE-UX-01: Giữ blocker timeline khi chỉnh sửa bản dịch
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Viewer giữ lần phân tích timeline thành công gần nhất trong bộ nhớ khi lưu bản dịch hoặc xử lý Job TTS; đánh dấu stale sau khi dữ liệu dịch/audio thay đổi, vẫn hiển thị blocker để tham khảo và chỉ thay kết quả sau response phân tích hợp lệ cùng Project. Lỗi reanalysis giữ nguyên kết quả cũ; lỗi Artifact stale có hướng dẫn tạo lại TTS. Chọn blocker theo Segment ID để cuộn/focus editor và seek video không tự phát. Kết quả stale không bật optimization/render; kiểm tra backend hiện tại tiếp tục là thẩm quyền.
+- **Tệp:** `frontend/src/App.tsx`, `docs/ARCHITECTURE.md`, `TASKS.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** `test_tts_timeline.py` đạt 12 test; `test_project_viewer_api.py` đạt 10 test; `test_video_render.py` đạt 21 test; `npm run build` (TypeScript và Vite) đạt; `git diff --check` đạt. Không có frontend component-test runner trong repository nên chưa chạy test tương tác UI. Không gọi provider, tạo Job, chạy render hoặc sửa dữ liệu Project.
+- **Còn lại:** Chưa nghiệm thu browser việc giữ blocker qua edit, điều hướng, phân tích thành công/thất bại. Last-known analysis chỉ tồn tại trong phiên viewer hiện tại; không được lưu backend và mất khi đổi Project hoặc refresh trình duyệt.
+
+## 2026-10-26 — AV-SYNC-03: Thực thi joint timeline bằng FFmpeg
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Renderer tải plan `av-sync-v1` thành công mới nhất của revision hiện tại, xác minh nguồn/Segment/Artifact và thực thi chính xác tốc độ video, vị trí audio và tốc độ background audio theo mapping toàn cục. FFprobe kiểm tra coverage frame/sample và toàn bộ output được decode trước publication transaction; sidecar joint dùng `timeline-render-v3`. Source probe tính thời lượng từ frame coverage và dành margin hai frame tại tốc độ 0.5× cộng một mẫu 48 kHz.
+- **Tệp:** `backend/app/services/video_render.py`, `backend/app/services/av_sync_optimization.py`, `tests/unit/test_video_render.py`, `tests/unit/test_av_sync_optimization.py`, `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** 59 test tập trung về render, joint planner/optimizer, timeline legacy và audio mixing đạt. FFmpeg tổng hợp thực thi plan ở tốc độ 0.7×, 0.5× và 1.0×; kiểm tra giữ đủ frame nguồn, đặt dub theo sample 48 kHz, frame/sample coverage, Job publication joint và đọc kết quả hiện hành. `compileall`, `pip check` và `git diff --check` đạt. Không dùng Project thật/provider, không kết nối Supabase và không áp dụng migration.
+- **Còn lại:** AV-SYNC-03 hoàn tất theo nghiệm thu offline. Chưa render trên Project thật. Migration `backend/migrations/20261026_av_sync_02_joint_plan.sql` vẫn chưa áp dụng; cần chạy qua quy trình migration PostgreSQL/Supabase đã phê duyệt và xác minh cột `result_json` cùng constraint rate trước khi dùng luồng này trên database đó. AV-SYNC-02 còn một phần; FLOW-01 không đổi trạng thái.
+
+## 2026-10-26 — AV-SYNC-03: Xác nhận tiến độ và điều kiện triển khai
+
+- **Trạng thái:** COMPLETE
+- **Thay đổi:** Đối chiếu tracking cuối với implementation AV-SYNC-03: plan joint được thực thi qua FFmpeg và kiểm tra coverage trước khi publish; trạng thái task là hoàn tất theo phạm vi offline. AV-SYNC-02 vẫn mở do migration PostgreSQL chưa áp dụng/xác minh; FLOW-01 vẫn một phần.
+- **Tệp:** `backend/app/services/video_render.py`, `backend/app/services/av_sync_optimization.py`, `backend/app/schemas/timeline.py`, `backend/app/services/joint_timeline.py`, `tests/unit/test_video_render.py`, `tests/unit/test_av_sync_optimization.py`, `backend/migrations/20261026_av_sync_02_joint_plan.sql` (chỉ kiểm tra, không sửa/áp dụng), `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Đối chiếu trạng thái/heading và bằng chứng trong task/log; không chạy lại test trong lượt kiểm tra tài liệu này. Lần xác minh implementation đã ghi nhận 59 test tập trung đạt, cùng `compileall`, `pip check` và `git diff --check`. Các lần chạy trung gian ban đầu gặp lỗi import do sai interpreter/PYTHONPATH và một số lỗi regression/FFprobe; sau khi sửa, lệnh cuối đạt đủ 59 test. Migration chưa được chạy trên PostgreSQL.
+- **Còn lại:** Không còn acceptance offline của AV-SYNC-03. Chưa kiểm chứng trên Project thật hoặc PostgreSQL/Supabase. Bước kế tiếp trước khi triển khai vào PostgreSQL là áp dụng migration qua quy trình đã phê duyệt và xác minh schema; FLOW-01 vẫn riêng biệt và chưa được bắt đầu.
+
+## 2026-10-26 — AV-SYNC-02: Nền tảng lập kế hoạch timeline TTS/video kết hợp
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Thêm planner `av-sync-v1` với mục tiêu minimax/squared distortion, mapping source/output liên tục, kiểm tra overlap và slack microsecond. Worker tuần tự thử candidate rates `{0, 25, 35}` có giới hạn, publish Artifact được chọn theo transaction sau khi recheck snapshot; API trả plan đã persist. Mọi plan giữ `renderer_supported=false` và `renderable=false`. Tạo migration thêm `result_json` cho Job và cho phép Artifact rate +25%; chưa áp dụng migration.
+- **Tệp:** `backend/app/models/entities.py`, `backend/app/schemas/jobs.py`, `backend/app/schemas/__init__.py`, `backend/app/schemas/timeline.py`, `backend/app/services/audio_normalization.py`, `backend/app/services/joint_timeline.py`, `backend/app/services/av_sync_optimization.py`, `backend/app/api/projects.py`, `backend/app/services/video_render.py`, `backend/app/workers/job_worker.py`, `backend/migrations/20261026_av_sync_02_joint_plan.sql`, `tests/unit/test_joint_timeline.py`, `tests/unit/test_av_sync_optimization.py`, `tests/unit/test_audio_normalization.py`, `tests/unit/test_project_viewer_api.py`, `tests/unit/test_video_render.py`, `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Planner 8 test, optimizer service 4 test, audio normalization 10 test, Project API 11 test, render regression 22 test, TTS incremental 25 test và TTS pipeline 5 test đạt (85 test); `compileall`, `pip check`, `git diff --check` đạt. Provider trong service test được giả lập; không gọi Edge-TTS/Gemini/Whisper live, không sửa Project/media hoặc áp dụng migration. Không chạy render thật.
+- **Còn lại:** Chưa kiểm chứng production FFprobe frame/sample coverage, PostgreSQL migration/locking hoặc render thực thi plan mới. Candidate budget exhaustion trả blocker và không publish một phần. Renderer vẫn không hỗ trợ plan mới. AV-SYNC-02 còn Partial; AV-SYNC-03 chưa bắt đầu.
+
+## 2026-10-26 — AV-SYNC-03: Xác nhận trạng thái cuối và prerequisite
+
+- **Trạng thái:** COMPLETE
+- **Thay đổi:** Xác nhận AV-SYNC-03 hoàn tất cho acceptance offline: renderer thực thi đúng plan joint, kiểm tra frame/sample trước khi publish và giữ an toàn cho render legacy. Task tracking đánh dấu AV-SYNC-03 hoàn tất; AV-SYNC-02 vẫn một phần do chưa áp dụng/xác minh migration trên PostgreSQL. Bước kế tiếp trước triển khai PostgreSQL là migration validation qua quy trình đã phê duyệt; FLOW-01 vẫn riêng biệt.
+- **Tệp:** Implementation/test liên quan: `backend/app/services/video_render.py`, `backend/app/services/av_sync_optimization.py`, `backend/app/schemas/timeline.py`, `backend/app/services/joint_timeline.py`, `tests/unit/test_video_render.py`, `tests/unit/test_av_sync_optimization.py`; migration `backend/migrations/20261026_av_sync_02_joint_plan.sql` chỉ được inspect, không sửa/áp dụng; tracking `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`.
+- **Kiểm chứng:** Bằng chứng implementation đã ghi nhận 59 test tập trung đạt, `compileall`, `pip check` và `git diff --check` đạt; các test không chạy lại trong lần đối chiếu tài liệu này. Những lỗi trung gian do interpreter/PYTHONPATH hoặc regression đã được sửa trước lệnh test cuối đạt. Migration chưa chạy trên PostgreSQL/Supabase.
+- **Limitations:** Chưa xác minh trên Project thật hoặc PostgreSQL/Supabase; migration chưa áp dụng. AV-SYNC-02 và FLOW-01 vẫn Partial.
+- **Next step:** Áp dụng `20261026_av_sync_02_joint_plan.sql` qua quy trình migration PostgreSQL/Supabase đã phê duyệt và xác minh schema trước khi triển khai luồng joint trên database. FLOW-01 tiếp tục là công việc riêng và chưa bắt đầu lại.
+- **Còn lại:** Không còn tiêu chí offline AV-SYNC-03 chưa đạt.

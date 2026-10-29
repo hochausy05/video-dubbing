@@ -149,7 +149,7 @@ class TtsPipelineTests(unittest.TestCase):
         self.assertIn("tts_artifact_stale", {issue["code"] for issue in stale_plan.json()["issues"]})
         self.assertTrue(client.get(f"/projects/{PROJECT_ID}/tts-readiness").json()["ready"])
 
-    def test_full_regeneration_replaces_optimized_audio_only_after_generation(self) -> None:
+    def test_regeneration_reuses_valid_optimized_audio_without_synthesis(self) -> None:
         prior_job_id = uuid.uuid4()
         storage = self.root / "storage"
         prior_relative = Path("projects") / str(PROJECT_ID) / "jobs" / str(prior_job_id) / "tts"
@@ -172,33 +172,21 @@ class TtsPipelineTests(unittest.TestCase):
                 voice="vi-VN-HoaiMyNeural", rate_percent=22, is_current=True,
             ))
 
-        async def fake_synthesis(text: str, path: Path, **kwargs) -> int:
-            self.assertEqual(text, "Xin chào Việt Nam.")
-            self.assertEqual(kwargs["rate_percent"], 0)
-            with Session(self.engine) as session:
-                prior = session.scalar(select(Artifact).where(Artifact.job_id == prior_job_id))
-                self.assertTrue(prior.is_current)
-                self.assertTrue((storage / Path(prior.storage_reference)).is_file())
-            path.write_bytes(b"replacement audio")
-            return 950
-
         with patch("app.services.uploads.get_storage_root", return_value=storage), \
                 patch("app.services.tts.get_edge_tts_voice", return_value="vi-VN-HoaiMyNeural"), \
-                patch("app.services.tts.get_edge_tts_concurrency", return_value=1), \
-                patch("app.services.tts.synthesize_segment", side_effect=fake_synthesis):
-            generate_project_tts(
+                patch("app.services.tts.synthesize_segment", side_effect=AssertionError("must reuse optimized audio")):
+            count = generate_project_tts(
                 self.engine, project_id=PROJECT_ID, job_id=TTS_JOB_ID, input_revision=0,
                 stage_callback=lambda _stage: None,
             )
-
+        self.assertEqual(count, 0)
         with Session(self.engine) as session:
             prior = session.scalar(select(Artifact).where(Artifact.job_id == prior_job_id))
-            replacement = session.scalar(select(Artifact).where(Artifact.job_id == TTS_JOB_ID))
-            segment = session.get(Segment, SEGMENT_ID)
-            self.assertFalse(prior.is_current)
-            self.assertEqual((replacement.is_current, replacement.duration_ms, replacement.rate_percent), (True, 950, 0))
-            self.assertEqual((segment.translated_text, segment.start_seconds, segment.end_seconds),
-                             ("Xin chào Việt Nam.", Decimal("2.000"), Decimal("4.000")))
+            self.assertTrue(prior.is_current)
+            self.assertEqual((prior.duration_ms, prior.rate_percent), (1_100, 22))
+            self.assertIsNone(session.scalar(select(Artifact).where(Artifact.job_id == TTS_JOB_ID)))
+            self.assertEqual(session.get(Job, TTS_JOB_ID).status, "succeeded")
+        self.assertEqual((prior_dir / f"{SEGMENT_ID}.mp3").read_bytes(), b"previous optimized audio")
 
     def test_translation_edit_regeneration_updates_artifact_and_timeline_duration(self) -> None:
         storage = self.root / "storage"

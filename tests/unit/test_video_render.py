@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import json
+import hashlib
 import tempfile
 import unittest
 import uuid
@@ -20,10 +21,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.main import app
 from app.models import Artifact, Job, Project, Segment
 from app.models.base import Base
-from app.services.audio_normalization import measured_audio_duration_ms
+from app.services.audio_normalization import measured_audio_duration_ms, measured_audio_duration_us
+from app.services.audio_mixing import write_ducking_envelope
 from app.services.tts import TTS_MEDIA_TYPE, translation_fingerprint
 from app.services.tts_timeline import TimelineSegmentInput, compute_timeline_plan
-from app.schemas.timeline import TimelineStretchOperation
+from app.schemas.timeline import JointSegmentTiming, JointTimelinePlan, JointVideoInterval, TimelineStretchOperation
 from app.schemas.render import RenderAudioSettings
 from app.services.video_render import (
     RENDER_MEDIA_TYPE,
@@ -32,6 +34,8 @@ from app.services.video_render import (
     _RenderSnapshot,
     _SpeechInput,
     _probe_source,
+    _probe_joint_source_timing,
+    _sha256_file,
     _validate_plan,
     _load_render_snapshot,
     _legacy_render_fingerprint,
@@ -144,6 +148,13 @@ class RenderFilterAndMediaTests(unittest.TestCase):
         fractional = self.root / "fractional-duration.mp4"
         _make_video(fractional, audio=False, duration=Decimal("1.375"))
         self.assertEqual(_probe_source(fractional).duration_ms, 1375)
+
+    def test_joint_optimizer_source_probe_measures_frame_coverage_and_half_speed_margin(self) -> None:
+        from app.services.av_sync_optimization import _probe_source_timing
+
+        duration_us, margin_us = _probe_source_timing(self.source)
+        self.assertEqual(duration_us, 2_000_000)
+        self.assertGreaterEqual(margin_us, 4 * 41_667 + 21)
 
     def test_one_stretch_places_following_speech_at_planner_output_timestamp(self) -> None:
         snapshot = self._snapshot(one_stretch=False)
@@ -282,6 +293,121 @@ class RenderFilterAndMediaTests(unittest.TestCase):
         self.assertIn("volume=0.900000", graph)
         self.assertNotIn("amultiply[bg]", graph)
 
+    def test_av_sync_joint_plan_executes_selected_speed_and_sample_aligned_speech(self) -> None:
+        speech = self.root / "joint-selected.mp3"
+        _make_speech(speech, Decimal("1.10"))
+        duration_us = measured_audio_duration_us(speech)
+        source_hash = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        planned_end = 500_000 + int((Decimal(1_500_000) / Decimal("0.7")).to_integral_value(rounding="ROUND_CEILING"))
+        plan = JointTimelinePlan(
+            project_id=PROJECT_ID, project_revision=0, source_video_sha256=source_hash,
+            source_video_duration_us=2_000_000, planned_output_duration_us=planned_end,
+            segments=[JointSegmentTiming(
+                segment_id=SEGMENT_ID, position=0, artifact_id=uuid.uuid4(),
+                source_start_us=500_000, source_end_us=600_000, source_window_end_us=2_000_000,
+                rate_percent=25, measured_audio_duration_us=duration_us,
+                output_audio_start_us=500_000, output_audio_end_us=500_000 + duration_us,
+                video_speed=0.7, signed_slack_us=(planned_end - 500_000) - duration_us,
+            )],
+            video_intervals=[
+                JointVideoInterval(source_start_us=0, source_end_us=500_000,
+                                   output_start_us=0, output_end_us=500_000, speed=1.0),
+                JointVideoInterval(source_start_us=500_000, source_end_us=2_000_000,
+                                   output_start_us=500_000, output_end_us=planned_end, speed=0.7),
+            ], blocking_issues=[], joint_feasible=True, coverage_precision_verified=True,
+            coverage_margin_us=200_000, renderer_supported=True, renderable=True,
+        )
+        snapshot = _RenderSnapshot(
+            PROJECT_ID, 0, self.source, source_hash, True, 0, plan, (), (),
+            (_SpeechInput(
+                SEGMENT_ID, plan.segments[0].artifact_id, speech, 500, (duration_us + 999) // 1000,
+                25, "synthetic", output_start_us=500_000, duration_us=duration_us,
+            ),), RenderAudioSettings(mode="fixed", background_gain=0.1), "synthetic-joint",
+        )
+        graph = build_render_filtergraph(snapshot)
+        self.assertIn("setpts=(PTS-STARTPTS)*1.428571429", graph)
+        self.assertIn("adelay=delays=24000S:all=1", graph)
+        self.assertIn("atempo=0.700000000", graph)
+        output = self.root / "joint-render.mp4"
+        rendered_ms = render_media(snapshot, output)
+        self.assertLessEqual(abs(rendered_ms * 1000 - planned_end), 42_000)
+        decoded_frames = subprocess.run([
+            "ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+            "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(output),
+        ], capture_output=True, text=True, check=True).stdout.strip()
+        source_frames = subprocess.run([
+            "ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+            "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(self.source),
+        ], capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(decoded_frames, source_frames)
+
+    def test_av_sync_joint_plan_rejects_negative_slack_and_unsupported_version(self) -> None:
+        speech = self.root / "joint-validation.mp3"
+        _make_speech(speech, Decimal("0.20"))
+        duration_us = measured_audio_duration_us(speech)
+        interval = JointVideoInterval(source_start_us=0, source_end_us=2_000_000,
+                                      output_start_us=0, output_end_us=2_000_000, speed=1.0)
+        base = JointTimelinePlan(
+            project_id=PROJECT_ID, project_revision=0, source_video_sha256="a" * 64,
+            source_video_duration_us=2_000_000, planned_output_duration_us=2_000_000,
+            segments=[JointSegmentTiming(
+                segment_id=SEGMENT_ID, position=0, artifact_id=uuid.uuid4(),
+                source_start_us=0, source_end_us=100_000, source_window_end_us=2_000_000,
+                rate_percent=0, measured_audio_duration_us=duration_us,
+                output_audio_start_us=0, output_audio_end_us=duration_us, video_speed=1.0,
+                signed_slack_us=2_000_000 - duration_us,
+            )], video_intervals=[interval], blocking_issues=[], joint_feasible=True,
+            coverage_precision_verified=True, coverage_margin_us=1,
+            renderer_supported=True, renderable=True,
+        )
+        base.segments[0].signed_slack_us = -1_000
+        with self.assertRaises(RenderError):
+            _validate_plan(base)
+        base.segments[0].signed_slack_us = 2_000_000 - duration_us
+        base.video_intervals[0].speed = 1.01
+        with self.assertRaises(RenderError):
+            _validate_plan(base)
+        base.video_intervals[0].speed = 1.0
+        base = base.model_copy(update={"plan_version": "av-sync-v2"})
+        with self.assertRaises(RenderError):
+            _validate_plan(base)
+
+    def test_av_sync_supports_minimum_and_normal_video_speed(self) -> None:
+        speech = self.root / "speed-boundary.mp3"
+        _make_speech(speech, Decimal("0.10"))
+        duration_us = measured_audio_duration_us(speech)
+        source_hash = _sha256_file(self.source)
+        for speed in (Decimal("0.5"), Decimal("1.0")):
+            with self.subTest(speed=speed):
+                planned_end = int((Decimal(2_000_000) / speed).to_integral_value(rounding="ROUND_CEILING"))
+                plan = JointTimelinePlan(
+                    project_id=PROJECT_ID, project_revision=0, source_video_sha256=source_hash,
+                    source_video_duration_us=2_000_000, planned_output_duration_us=planned_end,
+                    segments=[JointSegmentTiming(
+                        segment_id=SEGMENT_ID, position=0, artifact_id=uuid.uuid4(),
+                        source_start_us=0, source_end_us=100_000, source_window_end_us=2_000_000,
+                        rate_percent=0, measured_audio_duration_us=duration_us,
+                        output_audio_start_us=0, output_audio_end_us=duration_us,
+                        video_speed=float(speed), signed_slack_us=planned_end - duration_us,
+                    )], video_intervals=[JointVideoInterval(
+                        source_start_us=0, source_end_us=2_000_000, output_start_us=0,
+                        output_end_us=planned_end, speed=float(speed),
+                    )], blocking_issues=[], joint_feasible=True, coverage_precision_verified=True,
+                    coverage_margin_us=200_000, renderer_supported=True, renderable=True,
+                )
+                snapshot = _RenderSnapshot(
+                    PROJECT_ID, 0, self.source, source_hash, True, 0, plan, (), (),
+                    (_SpeechInput(
+                        SEGMENT_ID, plan.segments[0].artifact_id, speech, 0,
+                        (duration_us + 999) // 1000, 0, "synthetic",
+                        output_start_us=0, duration_us=duration_us,
+                    ),), RenderAudioSettings(mode="fixed", background_gain=0.1), "synthetic-boundary",
+                )
+                self.assertIn(f"setpts=(PTS-STARTPTS)*{(Decimal(1) / speed):.9f}",
+                              build_render_filtergraph(snapshot))
+                output = self.root / f"speed-{str(speed).replace('.', '-')}.mp4"
+                render_media(snapshot, output)
+
     def test_truncated_output_is_rejected_by_ffprobe_verification(self) -> None:
         truncated = self.root / "truncated.mp4"
         truncated.write_bytes(b"not an mp4")
@@ -343,6 +469,7 @@ class RenderJobAndApiTests(unittest.TestCase):
             session.add(Project(
                 id=PROJECT_ID, name="render integration", current_revision=0,
                 source_media_reference=source_relative_path(PROJECT_ID).as_posix(),
+                selected_voice=VOICE,
             ))
             session.add(Job(
                 id=TRANSLATION_JOB_ID, project_id=PROJECT_ID, operation_type="transcribe_translate",
@@ -432,6 +559,124 @@ class RenderJobAndApiTests(unittest.TestCase):
         self.assertEqual(download.status_code, 200)
         self.assertIn("attachment", download.headers["content-disposition"])
         self.assertNotIn(str(self.storage), metadata.text)
+
+    def test_unsupported_joint_plan_is_rejected_instead_of_using_legacy_timeline(self) -> None:
+        joint_job_id = uuid.UUID("50000000-0000-0000-0000-000000000001")
+        with Session(self.engine) as session, session.begin():
+            session.add(Job(
+                id=joint_job_id, project_id=PROJECT_ID, operation_type="av_sync_optimize",
+                input_revision=0, status="succeeded", stage="joint_optimization_complete",
+                result_json={
+                    "plan_version": "av-sync-v1", "project_id": str(PROJECT_ID), "project_revision": 0,
+                    "source_video_duration_us": 2_000_000, "planned_output_duration_us": 2_000_000,
+                    "source_video_sha256": "a" * 64, "segments": [],
+                    "video_intervals": [], "blocking_issues": [], "joint_feasible": True,
+                    "coverage_precision_verified": False, "coverage_margin_us": 0,
+                    "renderer_supported": False, "renderable": False,
+                },
+            ))
+        response = self.client.post(f"/projects/{PROJECT_ID}/render-jobs")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("blocked or unsupported", response.json()["detail"])
+
+    def test_joint_plan_renders_and_publishes_versioned_result_atomically(self) -> None:
+        from app.services.joint_timeline import seconds_to_us
+
+        duration_us = measured_audio_duration_us(self.audio_path)
+        source_duration_us, margin_us, _frame_pts = _probe_joint_source_timing(self.source)
+        with Session(self.engine) as session:
+            artifact = session.scalar(select(Artifact).where(Artifact.segment_id == SEGMENT_ID))
+        start_us = seconds_to_us(Decimal("0.200"))
+        end_us = seconds_to_us(Decimal("0.600"))
+        plan = JointTimelinePlan(
+            project_id=PROJECT_ID, project_revision=0, source_video_sha256=_sha256_file(self.source),
+            source_video_duration_us=source_duration_us, planned_output_duration_us=source_duration_us,
+            segments=[JointSegmentTiming(
+                segment_id=SEGMENT_ID, position=0, artifact_id=artifact.id,
+                source_start_us=start_us, source_end_us=end_us, source_window_end_us=source_duration_us,
+                rate_percent=0, measured_audio_duration_us=duration_us,
+                output_audio_start_us=start_us, output_audio_end_us=start_us + duration_us,
+                video_speed=1.0, signed_slack_us=source_duration_us - start_us - duration_us,
+            )], video_intervals=[
+                JointVideoInterval(source_start_us=0, source_end_us=start_us,
+                                   output_start_us=0, output_end_us=start_us, speed=1.0),
+                JointVideoInterval(source_start_us=start_us, source_end_us=source_duration_us,
+                                   output_start_us=start_us, output_end_us=source_duration_us, speed=1.0),
+            ], blocking_issues=[], joint_feasible=True, coverage_precision_verified=True,
+            coverage_margin_us=max(margin_us, 1), renderer_supported=True, renderable=True,
+        )
+        joint_job_id = uuid.uuid4()
+        with Session(self.engine) as session, session.begin():
+            session.add(Job(
+                id=joint_job_id, project_id=PROJECT_ID, operation_type="av_sync_optimize",
+                input_revision=0, status="succeeded", stage="joint_optimization_complete",
+                result_json=plan.model_dump(mode="json"),
+            ))
+        settings = {
+            "mode": "ducking", "background_gain": 0.35, "ducked_gain": 0.08,
+            "tts_gain": 1.0, "attack_ms": 80, "release_ms": 250, "bridge_gap_ms": 350,
+        }
+        queued = self.client.post(f"/projects/{PROJECT_ID}/render-jobs", json=settings)
+        self.assertEqual(queued.status_code, 202, queued.text)
+        render_job_id = uuid.UUID(queued.json()["id"])
+        ducking_intervals: list[tuple[int, int]] = []
+
+        def record_ducking(path, intervals, *, duration_ms, settings):
+            ducking_intervals.extend(intervals)
+            write_ducking_envelope(path, ducking_intervals, duration_ms=duration_ms, settings=settings)
+
+        with patch("app.services.video_render.write_ducking_envelope", side_effect=record_ducking):
+            self._claim_and_run(render_job_id)
+        self.assertEqual(ducking_intervals, [(start_us // 1000, (start_us + duration_us + 999) // 1000)])
+        with Session(self.engine) as session:
+            render_job = session.get(Job, render_job_id)
+            render_artifact = session.scalar(select(Artifact).where(Artifact.job_id == render_job_id))
+            self.assertEqual((render_job.status, render_job.stage), ("succeeded", "render_complete"))
+            output = self.storage / Path(render_artifact.storage_reference)
+            metadata = json.loads(output.with_name("render.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["version"], "timeline-render-v3")
+            self.assertEqual(metadata["plan_version"], "av-sync-v1")
+            self.assertEqual(metadata["speech_artifacts"][0]["artifact_id"], str(artifact.id))
+            self.assertEqual(metadata["joint_video_intervals"][1]["speed"], 1.0)
+            self.assertEqual(metadata["audio_settings"], settings)
+        result = self.client.get(f"/projects/{PROJECT_ID}/rendered-video")
+        self.assertEqual(result.status_code, 200, result.text)
+
+    def test_joint_render_rejects_a_plan_selecting_a_stale_artifact_id(self) -> None:
+        from app.services.joint_timeline import seconds_to_us
+
+        duration_us = measured_audio_duration_us(self.audio_path)
+        source_duration_us, margin_us, _frame_pts = _probe_joint_source_timing(self.source)
+        stale_artifact_id = uuid.uuid4()
+        plan = JointTimelinePlan(
+            project_id=PROJECT_ID, project_revision=0, source_video_sha256=_sha256_file(self.source),
+            source_video_duration_us=source_duration_us, planned_output_duration_us=source_duration_us,
+            segments=[JointSegmentTiming(
+                segment_id=SEGMENT_ID, position=0, artifact_id=stale_artifact_id,
+                source_start_us=seconds_to_us(Decimal("0.200")),
+                source_end_us=seconds_to_us(Decimal("0.600")),
+                source_window_end_us=source_duration_us, rate_percent=0,
+                measured_audio_duration_us=duration_us, output_audio_start_us=seconds_to_us(Decimal("0.200")),
+                output_audio_end_us=seconds_to_us(Decimal("0.200")) + duration_us,
+                video_speed=1.0, signed_slack_us=source_duration_us - seconds_to_us(Decimal("0.200")) - duration_us,
+            )], video_intervals=[
+                JointVideoInterval(source_start_us=0, source_end_us=200_000,
+                                   output_start_us=0, output_end_us=200_000, speed=1.0),
+                JointVideoInterval(source_start_us=200_000, source_end_us=source_duration_us,
+                                   output_start_us=200_000, output_end_us=source_duration_us, speed=1.0),
+            ], blocking_issues=[], joint_feasible=True, coverage_precision_verified=True,
+            coverage_margin_us=max(margin_us, 1), renderer_supported=True, renderable=True,
+        )
+        joint_job_id = uuid.uuid4()
+        with Session(self.engine) as session, session.begin():
+            session.add(Job(
+                id=joint_job_id, project_id=PROJECT_ID, operation_type="av_sync_optimize",
+                input_revision=0, status="succeeded", stage="joint_optimization_complete",
+                result_json=plan.model_dump(mode="json"),
+            ))
+        response = self.client.post(f"/projects/{PROJECT_ID}/render-jobs")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("different current TTS Artifact", response.json()["detail"])
 
     def test_failed_render_keeps_previously_published_current_artifact(self) -> None:
         queued = self.client.post(f"/projects/{PROJECT_ID}/render-jobs")
@@ -524,6 +769,49 @@ class RenderJobAndApiTests(unittest.TestCase):
         response = self.client.get(f"/projects/{PROJECT_ID}/rendered-video")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(artifact_path.read_bytes(), original_bytes)
+
+    def test_render_result_endpoints_reject_wrong_project_or_revision_provenance(self) -> None:
+        job_id = uuid.UUID(self.client.post(f"/projects/{PROJECT_ID}/render-jobs").json()["id"])
+        self._claim_and_run(job_id)
+        other_project_id = uuid.uuid4()
+        with Session(self.engine) as session, session.begin():
+            session.add(Project(id=other_project_id, name="unrelated project"))
+
+        endpoints = (
+            f"/projects/{PROJECT_ID}/rendered-video",
+            f"/projects/{PROJECT_ID}/rendered-video/preview",
+            f"/projects/{PROJECT_ID}/rendered-video/download",
+        )
+
+        def assert_all_result_routes_hide_render() -> None:
+            for endpoint in endpoints:
+                with self.subTest(endpoint=endpoint):
+                    response = self.client.get(endpoint)
+                    self.assertEqual(response.status_code, 404)
+
+        with Session(self.engine) as session, session.begin():
+            session.get(Job, job_id).project_id = other_project_id
+        assert_all_result_routes_hide_render()
+
+        with Session(self.engine) as session, session.begin():
+            session.get(Job, job_id).project_id = PROJECT_ID
+            session.get(Job, job_id).input_revision = 1
+        assert_all_result_routes_hide_render()
+
+        with Session(self.engine) as session, session.begin():
+            session.get(Job, job_id).input_revision = 0
+            session.scalar(select(Artifact).where(Artifact.job_id == job_id)).revision = 1
+        assert_all_result_routes_hide_render()
+
+        with Session(self.engine) as session, session.begin():
+            session.scalar(select(Artifact).where(Artifact.job_id == job_id)).revision = 0
+            session.get(Job, job_id).status = "failed"
+        assert_all_result_routes_hide_render()
+
+        with Session(self.engine) as session, session.begin():
+            session.get(Job, job_id).status = "succeeded"
+            session.get(Job, job_id).stage = "rendering_video"
+        assert_all_result_routes_hide_render()
 
     def test_missing_or_stale_tts_artifact_blocks_enqueue(self) -> None:
         with Session(self.engine) as session, session.begin():

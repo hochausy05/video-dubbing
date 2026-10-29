@@ -17,10 +17,11 @@ from app.core.config import get_job_worker_poll_interval_seconds
 from app.core.database import create_database_engine
 from app.models import Artifact, Job, JobStatus
 from app.services.asr import transcribe_project
-from app.services.translation import translate_project
+from app.services.translation import translate_project, verify_gemini_model_listed
 from app.services.tts import generate_project_tts
 from app.services.tts_optimization import optimize_project_tts
 from app.services.tts_normalization import normalize_project_tts
+from app.services.av_sync_optimization import process_joint_optimization
 from app.services.tts import _safe_tts_dir
 from app.services.video_render import render_project, _safe_render_dir
 
@@ -113,7 +114,7 @@ def cleanup_interrupted_tts_optimization_files(engine: Engine, job_ids: tuple[UU
     with Session(engine) as session:
         jobs = session.scalars(select(Job).where(
             Job.id.in_(job_ids),
-            Job.operation_type.in_(["tts_optimize", "tts_normalize"]),
+            Job.operation_type.in_(["tts_optimize", "tts_normalize", "av_sync_optimize"]),
             Job.status == JobStatus.INTERRUPTED.value,
         )).all()
         cleanup_paths: list[tuple[UUID, UUID]] = []
@@ -232,10 +233,18 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
             if job.status != JobStatus.RUNNING.value:
                 raise JobTransitionError("The Job is no longer running.")
             operation_type = job.operation_type
-            if operation_type not in {"transcribe_translate", "tts", "tts_optimize", "tts_normalize", "render"}:
+            if operation_type not in {"transcribe_translate", "translate_existing", "tts", "tts_optimize", "tts_normalize", "av_sync_optimize", "render"}:
                 raise JobTransitionError("This Job type is not implemented by the worker yet.")
             project_id = job.project_id
             input_revision = job.input_revision
+
+        if operation_type == "av_sync_optimize":
+            process_joint_optimization(
+                engine, project_id=project_id, job_id=job_id, input_revision=input_revision,
+                stage_callback=lambda stage: _set_running_job_stage(engine, job_id, stage),
+            )
+            logger.info("Job %s completed AV joint optimization; renderer support remains disabled.", job_id)
+            return
 
         if operation_type == "tts":
             stage_callback = lambda stage: _set_running_job_stage(engine, job_id, stage)
@@ -287,6 +296,23 @@ def process_claimed_job(engine: Engine, job_id: UUID) -> None:
                 stage_callback=stage_callback,
             )
             logger.info("Job %s published rendered MP4 with duration %d ms.", job_id, duration_ms)
+            return
+
+        _set_running_job_stage(engine, job_id, "checking_gemini_model")
+        verify_gemini_model_listed()
+        if operation_type == "translate_existing":
+            translation = translate_project(
+                engine,
+                project_id=project_id,
+                job_id=job_id,
+                input_revision=input_revision,
+                stage_callback=lambda stage: _set_running_job_stage(engine, job_id, stage),
+            )
+            mark_job_succeeded(engine, job_id, stage="translation_ready")
+            logger.info(
+                "Job %s completed transcript-only translation for %d Segments in %d batch(es).",
+                job_id, translation.segment_count, translation.batch_count,
+            )
             return
 
         _set_running_job_stage(engine, job_id, "preparing_asr")

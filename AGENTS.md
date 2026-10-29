@@ -10,9 +10,10 @@ Do **not** read every Markdown file by default.
 
 1. Read `RULES.md`.
 2. In `TASKS.md`, read only `Current Task` and the matching task entry.
-3. Inspect the repository paths that the task may change.
-4. Use the routing table below to load only relevant document sections.
-5. Read additional documents only when a concrete ambiguity cannot be resolved from code, tests, or the routed source of truth.
+3. If docs/tasks/task_<TASK_ID>.md exists for the requested task, read that specification in full. Do not read other task specification files unless explicitly requested.
+4. Inspect the repository paths that the task may change.
+5. Use the routing table below to load only relevant document sections.
+6. Read additional documents only when a concrete ambiguity cannot be resolved from code, tests, or the routed source of truth.
 
 Use heading search before opening a long document, for example:
 
@@ -22,7 +23,7 @@ rg -n "^## |^### |TASK-ID|FR-[0-9]+|NFR-[0-9]+|US-[0-9]+" <file>
 
 ## Document routing
 
-| Task type | Read in addition to `RULES.md` and the task entry |
+| Task type | Read in addition to `RULES.md`, the matching `TASKS.md` entry, and the requested task specification when present |
 | --- | --- |
 | Project overview or onboarding | Relevant section of `README.md` |
 | Roadmap, phase order, or scope scheduling | Relevant phase in `PLAN.md` |

@@ -9,14 +9,13 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Callable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.core.config import (
-    get_edge_tts_concurrency,
     get_edge_tts_voice,
     get_tts_optimization_max_attempts,
     get_tts_optimization_max_rate_percent,
@@ -30,6 +29,7 @@ from app.schemas.tts_optimization import (
 )
 from app.services.audio_normalization import read_normalization_metadata, write_normalization_metadata
 from app.services.tts import (
+    MAX_ATTEMPTS as MAX_SYNTHESIS_ATTEMPTS,
     TTS_MEDIA_TYPE,
     TTSError,
     _safe_tts_dir,
@@ -52,6 +52,7 @@ class _Candidate:
     path: Path | None
     duration_ms: int
     rate_percent: int
+    artifact_id: UUID | None
 
 
 def enqueue_tts_optimization(
@@ -128,6 +129,23 @@ def _blocking_ids(plan) -> set[UUID]:
     }
 
 
+def _available_optimization_operations(
+    current_rate: int,
+    maximum_rate: int,
+    maximum_operations_per_segment: int,
+) -> int:
+    """Count finite rate steps available for one initially blocking Segment."""
+    count = 0
+    rate = current_rate
+    while count < maximum_operations_per_segment:
+        next_rate = next_optimization_rate(rate, maximum_rate)
+        if next_rate is None:
+            break
+        count += 1
+        rate = next_rate
+    return count
+
+
 def optimize_project_tts(
     engine: Engine,
     *,
@@ -201,14 +219,24 @@ def optimize_project_tts(
             raise TTSError("Current TTS inputs cannot be safely optimized.")
 
     voice = get_edge_tts_voice()
-    concurrency = get_edge_tts_concurrency()
     segment_by_id = {item.id: item for item in segments}
+    initially_blocking_ids = _blocking_ids(original_plan)
     temporary_dir = _safe_tts_dir(project_id, job_id, temporary=True)
     final_dir = _safe_tts_dir(project_id, job_id, temporary=False)
     temporary_dir.mkdir(parents=True, exist_ok=False)
     best: dict[UUID, _Candidate] = {}
-    attempts: dict[UUID, int] = {}
+    operations_by_segment: dict[UUID, int] = {}
     last_rate = {segment_id: int(artifact.rate_percent or 0) for segment_id, artifact in artifacts_by_segment.items()}
+    max_synthesis_operations = sum(
+        _available_optimization_operations(
+            last_rate[segment_id], max_rate_percent, max_attempts
+        )
+        for segment_id in initially_blocking_ids
+        if segment_id in last_rate
+    )
+    max_synthesis_requests = max_synthesis_operations * MAX_SYNTHESIS_ATTEMPTS
+    optimization_operation_count = 0
+    synthesis_attempt_count = 0
     current_plan = original_plan
     final_dir_created = False
     try:
@@ -221,12 +249,16 @@ def optimize_project_tts(
                 )
             if current_plan.renderable:
                 break
-            blocking_segment_ids = _blocking_ids(current_plan)
+            blocking_segment_ids = _blocking_ids(current_plan) & initially_blocking_ids
             selected: list[tuple[UUID, int, str]] = []
             for segment_id in sorted(blocking_segment_ids, key=lambda item: (segment_by_id[item].position, str(item))):
                 segment = segment_by_id.get(segment_id)
                 artifact = artifacts_by_segment.get(segment_id)
-                if segment is None or artifact is None or attempts.get(segment_id, 0) >= max_attempts:
+                if (
+                    segment is None or artifact is None
+                    or operations_by_segment.get(segment_id, 0) >= max_attempts
+                    or optimization_operation_count >= max_synthesis_operations
+                ):
                     continue
                 previous_rate = last_rate[segment_id]
                 rate = next_optimization_rate(previous_rate, max_rate_percent)
@@ -236,33 +268,80 @@ def optimize_project_tts(
             if not selected:
                 break
 
-            async def synthesize_round() -> list[tuple[UUID, int, Path, int]]:
-                semaphore = asyncio.Semaphore(concurrency)
+            async def synthesize_round() -> list[tuple[UUID, int, Path, int, UUID]]:
+                nonlocal optimization_operation_count, synthesis_attempt_count
+                semaphore = asyncio.Semaphore(1)
+                generated_candidates: list[tuple[UUID, int, Path, int, UUID]] = []
 
                 async def one(segment_id: UUID, rate: int, text: str):
+                    nonlocal optimization_operation_count
                     path = temporary_dir / f"{segment_id}-{rate}.mp3"
+                    candidate_artifact_id = uuid4()
+                    operation_number = optimization_operation_count + 1
+                    optimization_operation_count += 1
+                    operations_by_segment[segment_id] = operations_by_segment.get(segment_id, 0) + 1
                     stage_callback("optimizing_tts")
-                    duration_ms = await synthesizer(
-                        text, path, voice=voice, rate_percent=rate, semaphore=semaphore
+                    logger.info(
+                        "TTS optimization operation started (job_id=%s, segment_id=%s, artifact_id=%s, rate_percent=%d, operation=%d/%d).",
+                        job_id,
+                        segment_id,
+                        candidate_artifact_id,
+                        rate,
+                        operation_number,
+                        max_synthesis_operations,
                     )
-                    return segment_id, rate, path, duration_ms
 
-                return await asyncio.gather(*(one(*item) for item in selected))
+                    def record_synthesis_attempt(attempt_number: int) -> None:
+                        nonlocal synthesis_attempt_count
+                        if not 1 <= attempt_number <= MAX_SYNTHESIS_ATTEMPTS:
+                            raise TTSError("TTS optimization exceeded the per-synthesis request limit.")
+                        if synthesis_attempt_count >= max_synthesis_requests:
+                            raise TTSError("TTS optimization reached its bounded synthesis request limit.")
+                        synthesis_attempt_count += 1
+                        logger.info(
+                            "TTS optimization synthesis attempt started (job_id=%s, segment_id=%s, artifact_id=%s, rate_percent=%d, attempt=%d/%d, request=%d/%d).",
+                            job_id,
+                            segment_id,
+                            candidate_artifact_id,
+                            rate,
+                            attempt_number,
+                            MAX_SYNTHESIS_ATTEMPTS,
+                            synthesis_attempt_count,
+                            max_synthesis_requests,
+                        )
+
+                    duration_ms = await synthesizer(
+                        text,
+                        path,
+                        voice=voice,
+                        rate_percent=rate,
+                        semaphore=semaphore,
+                        segment_id=segment_id,
+                        artifact_id=candidate_artifact_id,
+                        attempt_callback=record_synthesis_attempt,
+                    )
+                    return segment_id, rate, path, duration_ms, candidate_artifact_id
+
+                for selected_operation in selected:
+                    if optimization_operation_count >= max_synthesis_operations:
+                        break
+                    generated_candidates.append(await one(*selected_operation))
+                return generated_candidates
 
             generated = asyncio.run(synthesize_round())
-            for segment_id, rate, path, duration_ms in generated:
-                attempts[segment_id] = attempts.get(segment_id, 0) + 1
+            for segment_id, rate, path, duration_ms, candidate_artifact_id in generated:
                 last_rate[segment_id] = rate
                 previous_duration = best.get(segment_id)
                 if previous_duration is None:
                     previous_duration = _Candidate(
                         None, int(artifacts_by_segment[segment_id].duration_ms),
                         int(artifacts_by_segment[segment_id].rate_percent or 0),
+                        None,
                     )
                 if duration_ms < previous_duration.duration_ms:
                     if previous_duration.path is not None and previous_duration.path.exists():
                         previous_duration.path.unlink(missing_ok=True)
-                    best[segment_id] = _Candidate(path, duration_ms, rate)
+                    best[segment_id] = _Candidate(path, duration_ms, rate, candidate_artifact_id)
                 else:
                     path.unlink(missing_ok=True)
             stage_callback("reanalyzing_timeline")
@@ -324,9 +403,12 @@ def optimize_project_tts(
             }
             for segment_id, candidate in best.items():
                 artifact = current_artifacts_by_segment[segment_id]
+                if candidate.artifact_id is None:
+                    raise TTSError("A generated TTS optimization Artifact has no stable identifier.")
                 artifact.is_current = False
                 segment = segment_by_id[segment_id]
                 session.add(Artifact(
+                    id=candidate.artifact_id,
                     project_id=project_id,
                     job_id=job_id,
                     segment_id=segment_id,
@@ -345,7 +427,16 @@ def optimize_project_tts(
             job.stage = "tts_optimization_complete"
             job.safe_error = None
             job.completed_at = session.scalar(select(func.now()))
-    except Exception:
+    except Exception as error:
+        logger.warning(
+            "TTS optimization stopped (job_id=%s, optimization_operations=%d/%d, synthesis_attempts=%d/%d, exception_class=%s).",
+            job_id,
+            optimization_operation_count,
+            max_synthesis_operations,
+            synthesis_attempt_count,
+            max_synthesis_requests,
+            type(error).__name__,
+        )
         shutil.rmtree(temporary_dir, ignore_errors=True)
         if final_dir_created:
             shutil.rmtree(final_dir, ignore_errors=True)
@@ -353,8 +444,14 @@ def optimize_project_tts(
     finally:
         shutil.rmtree(temporary_dir, ignore_errors=True)
     logger.info(
-        "TTS optimization Job %s published %d improved Segment Artifact(s); renderable=%s.",
-        job_id, len(best), current_plan.renderable,
+        "TTS optimization Job %s finished: improved_artifacts=%d, optimization_operations=%d/%d, synthesis_attempts=%d/%d, renderable=%s.",
+        job_id,
+        len(best),
+        optimization_operation_count,
+        max_synthesis_operations,
+        synthesis_attempt_count,
+        max_synthesis_requests,
+        current_plan.renderable,
     )
     return len(best)
 

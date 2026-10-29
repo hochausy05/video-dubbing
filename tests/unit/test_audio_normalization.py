@@ -12,6 +12,7 @@ from unittest.mock import patch
 from app.services.audio_normalization import (
     AudioNormalizationError,
     measured_audio_duration_ms,
+    measured_audio_duration_us,
     normalize_audio_file,
 )
 
@@ -47,6 +48,17 @@ def silence_events(path: Path, minimum_seconds: float = 0.02) -> tuple[list[floa
 
 
 class AudioNormalizationTests(unittest.TestCase):
+    def test_microsecond_measurement_uses_conservative_ceiling(self) -> None:
+        from unittest.mock import patch
+        from subprocess import CompletedProcess
+
+        with tempfile.TemporaryDirectory() as directory:
+            media = Path(directory) / "sample.mp3"
+            media.write_bytes(b"fixture")
+            result = CompletedProcess([], 0, '{"format":{"duration":"1.0000001"}}', "")
+            with patch("app.services.audio_normalization._run", return_value=result):
+                self.assertEqual(measured_audio_duration_us(media), 1_000_001)
+
     def test_removes_approximately_1000ms_trailing_silence_from_media(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

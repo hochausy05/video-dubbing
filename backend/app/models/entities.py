@@ -102,6 +102,7 @@ class Job(TimestampedModel, Base):
     stage: Mapped[str | None] = mapped_column(String(128))
     safe_error: Mapped[str | None] = mapped_column(Text)
     audio_settings: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    result_json: Mapped[dict[str, object] | None] = mapped_column(JSON)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -149,7 +150,7 @@ class Artifact(TimestampedModel, Base):
             name="ck_autodub_artifacts_duration_positive",
         ),
         CheckConstraint(
-            "rate_percent IS NULL OR rate_percent IN (0, 6, 12, 14, 20, 22, 35)",
+            "rate_percent IS NULL OR rate_percent IN (0, 6, 12, 14, 20, 22, 25, 35)",
             name="ck_autodub_artifacts_rate_range",
         ),
     )

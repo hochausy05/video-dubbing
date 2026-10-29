@@ -85,6 +85,31 @@ def measured_audio_duration_ms(path: Path) -> int:
     return duration_ms
 
 
+def measured_audio_duration_us(path: Path) -> int:
+    """Return a conservative microsecond duration from FFprobe (never round down)."""
+    if not path.is_file() or path.stat().st_size == 0:
+        raise AudioNormalizationError("Audio file is empty or unavailable.")
+    result = _run([
+        "ffprobe", "-v", "error", "-select_streams", "a:0",
+        "-show_entries", "format=duration:stream=duration", "-of", "json", str(path),
+    ], timeout=FFPROBE_TIMEOUT_SECONDS)
+    if result.returncode:
+        raise AudioNormalizationError("Audio file is invalid or unreadable.")
+    try:
+        metadata = json.loads(result.stdout)
+        raw_duration = metadata.get("format", {}).get("duration")
+        if raw_duration in (None, ""):
+            raw_duration = next(
+                stream["duration"] for stream in metadata["streams"] if stream.get("duration")
+            )
+        duration = Decimal(str(raw_duration))
+    except (KeyError, TypeError, ValueError, InvalidOperation, StopIteration, json.JSONDecodeError) as error:
+        raise AudioNormalizationError("Audio file has no valid measured duration.") from error
+    if not duration.is_finite() or duration <= 0:
+        raise AudioNormalizationError("Audio file has no valid measured duration.")
+    return int((duration * 1_000_000).to_integral_value(rounding="ROUND_CEILING"))
+
+
 def _maximum_volume_db(path: Path) -> float:
     result = _run([
         "ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-af", "volumedetect",

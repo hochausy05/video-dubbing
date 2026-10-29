@@ -22,11 +22,13 @@ from app.models import Artifact, Job, JobStatus, Project, Segment
 from app.schemas import JobCreated, RenderArtifactRead
 from app.schemas.render import RenderAudioSettings
 from app.services.audio_mixing import write_ducking_envelope
-from app.schemas.timeline import TTSTimelinePlan
-from app.services.audio_normalization import measured_audio_duration_ms
+from app.schemas.timeline import JointTimelinePlan, TTSTimelinePlan
+from app.services.audio_normalization import measured_audio_duration_ms, measured_audio_duration_us
 from app.services.tts import TTS_MEDIA_TYPE
 from app.services.tts_readiness import ProjectNotFoundError
 from app.services.tts_timeline import build_project_timeline_plan
+from app.services.joint_timeline import seconds_to_us
+from app.services.tts_artifacts import validate_segment_tts_artifact
 from app.services.uploads import UploadStorageError, resolve_storage_path, source_relative_path
 
 
@@ -51,6 +53,8 @@ class _SpeechInput:
     duration_ms: int
     rate_percent: int
     sha256: str
+    output_start_us: int | None = None
+    duration_us: int | None = None
 
 
 @dataclass(frozen=True)
@@ -61,7 +65,7 @@ class _RenderSnapshot:
     source_sha256: str
     source_has_audio: bool
     original_audio_start_ms: int
-    plan: TTSTimelinePlan
+    plan: TTSTimelinePlan | JointTimelinePlan
     segments: tuple[tuple[object, ...], ...]
     artifacts: tuple[tuple[object, ...], ...]
     speech_inputs: tuple[_SpeechInput, ...]
@@ -79,9 +83,17 @@ class _SourceProbe:
 
 @dataclass(frozen=True)
 class _VideoInterval:
-    start_ms: int
-    end_ms: int
+    start_us: int
+    end_us: int
     factor: Decimal
+
+    @property
+    def start_ms(self) -> int:
+        return self.start_us // 1000
+
+    @property
+    def end_ms(self) -> int:
+        return self.end_us // 1000
 
 
 def _sha256_file(path: Path) -> str:
@@ -168,7 +180,61 @@ def _probe_source(path: Path) -> _SourceProbe:
     return _SourceProbe(duration_ms, bool(video), bool(audio), start_ms)
 
 
-def _validate_plan(plan: TTSTimelinePlan) -> tuple[_VideoInterval, ...]:
+def _probe_joint_source_timing(path: Path) -> tuple[int, int, tuple[Decimal, ...]]:
+    """Read normalized source-frame PTS, frame coverage duration and safe margin."""
+    result = _run([
+        "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_frames",
+        "-show_entries", "frame=best_effort_timestamp_time,pkt_duration_time,duration_time", "-of", "json", str(path),
+    ], timeout=FFPROBE_TIMEOUT_SECONDS * 4,
+       failure_message="Source frame timing could not be verified for joint rendering.")
+    try:
+        payload = json.loads(result.stdout)
+        frames = payload.get("frames", [])
+        raw_pts = [Decimal(str(row["best_effort_timestamp_time"])) for row in frames]
+        frame_durations = [Decimal(str(row.get("pkt_duration_time") or row["duration_time"])) for row in frames]
+        if not raw_pts or len(raw_pts) != len(frame_durations):
+            raise ValueError
+        first_pts = min(raw_pts)
+        normalized_pts = [timestamp - first_pts for timestamp in raw_pts]
+        maximum_frame = max(frame_durations)
+        final_coverage = max(timestamp + frame_duration for timestamp, frame_duration
+                             in zip(normalized_pts, frame_durations, strict=True))
+        if (not final_coverage.is_finite() or final_coverage <= 0
+                or not maximum_frame.is_finite() or maximum_frame <= 0):
+            raise ValueError
+        duration_us = int((final_coverage * 1_000_000).to_integral_value(rounding="ROUND_CEILING"))
+        frame_us = int((maximum_frame * 1_000_000).to_integral_value(rounding="ROUND_CEILING"))
+        sample_us = (1_000_000 + 48_000 - 1) // 48_000
+        return duration_us, frame_us * 2 + sample_us, tuple(timestamp * 1_000_000 for timestamp in normalized_pts)
+    except (KeyError, TypeError, ValueError, ArithmeticError, json.JSONDecodeError) as error:
+        raise RenderError("Source frame timing is insufficient for strict joint coverage.") from error
+
+
+def _load_current_joint_plan(session: Session, project_id: UUID, revision: int) -> JointTimelinePlan | None:
+    jobs = session.scalars(select(Job).where(
+        Job.project_id == project_id,
+        Job.operation_type == "av_sync_optimize",
+        Job.status == JobStatus.SUCCEEDED.value,
+        Job.input_revision == revision,
+    ).order_by(Job.created_at.desc(), Job.id.desc())).all()
+    for job in jobs:
+        if job.result_json is None:
+            raise RenderError("The latest successful joint optimization Job has no persisted plan.")
+        if not isinstance(job.result_json, dict) or job.result_json.get("plan_version") != "av-sync-v1":
+            raise RenderError("The current joint plan uses an unsupported version.")
+        try:
+            plan = JointTimelinePlan.model_validate(job.result_json)
+        except ValueError as error:
+            raise RenderError("The persisted joint plan is malformed and cannot be rendered.") from error
+        if plan.project_id != project_id or plan.project_revision != revision:
+            raise RenderError("The persisted joint plan belongs to a stale Project revision.")
+        if not plan.joint_feasible or not plan.renderer_supported or not plan.renderable:
+            raise RenderError("The current joint plan is blocked or unsupported by the renderer.")
+        return plan
+    return None
+
+
+def _validate_legacy_plan(plan: TTSTimelinePlan) -> tuple[_VideoInterval, ...]:
     if (
         not plan.renderable or plan.blocking_issue_count != 0
         or plan.original_video_duration_ms is None or plan.original_video_duration_ms <= 0
@@ -199,14 +265,14 @@ def _validate_plan(plan: TTSTimelinePlan) -> tuple[_VideoInterval, ...]:
         if abs((Decimal(interval_ms) * factor) - Decimal(operation.expected_output_duration_ms)) > 2:
             raise RenderError("The timeline plan stretch factor does not match its duration.")
         if start > cursor:
-            intervals.append(_VideoInterval(cursor, start, Decimal(1)))
-        intervals.append(_VideoInterval(start, end, factor))
+            intervals.append(_VideoInterval(cursor * 1000, start * 1000, Decimal(1)))
+        intervals.append(_VideoInterval(start * 1000, end * 1000, factor))
         cursor = end
     if cursor < plan.original_video_duration_ms:
-        intervals.append(_VideoInterval(cursor, plan.original_video_duration_ms, Decimal(1)))
-    if not intervals or intervals[0].start_ms != 0 or intervals[-1].end_ms != plan.original_video_duration_ms:
+        intervals.append(_VideoInterval(cursor * 1000, plan.original_video_duration_ms * 1000, Decimal(1)))
+    if not intervals or intervals[0].start_us != 0 or intervals[-1].end_us != plan.original_video_duration_ms * 1000:
         raise RenderError("The timeline operations do not cover the complete source video.")
-    if any(left.end_ms != right.start_ms for left, right in zip(intervals, intervals[1:])):
+    if any(left.end_us != right.start_us for left, right in zip(intervals, intervals[1:])):
         raise RenderError("The timeline operations contain a gap or duplicate source interval.")
 
     speech = sorted(plan.segments, key=lambda row: row.output_audio_start_ms)
@@ -223,6 +289,93 @@ def _validate_plan(plan: TTSTimelinePlan) -> tuple[_VideoInterval, ...]:
     if len(speech) != plan.segment_count:
         raise RenderError("The timeline plan does not include every TTS Segment.")
     return tuple(intervals)
+
+
+def _validate_joint_plan(plan: JointTimelinePlan) -> tuple[_VideoInterval, ...]:
+    if (
+        plan.plan_version != "av-sync-v1" or not plan.renderer_supported or not plan.renderable
+        or not plan.joint_feasible or plan.blocking_issues
+        or not plan.coverage_precision_verified or plan.coverage_margin_us < 0
+        or plan.source_video_duration_us <= 0 or plan.planned_output_duration_us <= 0
+        or not plan.source_video_sha256 or len(plan.source_video_sha256) != 64
+    ):
+        raise RenderError("The av-sync-v1 plan is blocked or unsupported by the active renderer.")
+    intervals: list[_VideoInterval] = []
+    source_cursor = output_cursor = 0
+    source_ranges = []
+    for row in plan.video_intervals:
+        speed = Decimal(str(row.speed))
+        if (
+            row.source_start_us != source_cursor or row.source_end_us <= row.source_start_us
+            or row.output_start_us != output_cursor or row.output_end_us <= row.output_start_us
+            or not speed.is_finite() or speed < Decimal("0.5") or speed > Decimal(1)
+        ):
+            raise RenderError("The joint plan contains an invalid or discontinuous source/output interval.")
+        source_duration = row.source_end_us - row.source_start_us
+        expected_output_duration = int((Decimal(source_duration) / speed).to_integral_value(rounding="ROUND_CEILING"))
+        if row.output_end_us - row.output_start_us != expected_output_duration:
+            raise RenderError("A joint video interval duration does not match its selected playback speed.")
+        intervals.append(_VideoInterval(row.source_start_us, row.source_end_us, Decimal(1) / speed))
+        source_ranges.append((row.source_start_us, row.source_end_us))
+        source_cursor = row.source_end_us
+        output_cursor = row.output_end_us
+    if (
+        not intervals or source_cursor != plan.source_video_duration_us
+        or output_cursor != plan.planned_output_duration_us
+        or any(left[1] != right[0] for left, right in zip(source_ranges, source_ranges[1:]))
+    ):
+        raise RenderError("The joint plan does not cover the complete source video exactly once.")
+    if len(plan.segments) == 0 or len({row.segment_id for row in plan.segments}) != len(plan.segments):
+        raise RenderError("The joint plan must contain unique Segment identities.")
+
+    def map_time(source_time_us: int) -> int:
+        if source_time_us == plan.source_video_duration_us:
+            return plan.planned_output_duration_us
+        interval = next((row for row in plan.video_intervals
+                         if row.source_start_us <= source_time_us < row.source_end_us), None)
+        if interval is None:
+            raise RenderError("A Segment timestamp is outside the joint source mapping.")
+        speed = Decimal(str(interval.speed))
+        delta = int((Decimal(source_time_us - interval.source_start_us) / speed)
+                    .to_integral_value(rounding="ROUND_CEILING"))
+        return interval.output_start_us + delta
+
+    for row in plan.segments:
+        if (
+            not 0 <= row.rate_percent <= 35 or row.measured_audio_duration_us <= 0
+            or row.source_start_us < 0 or row.source_end_us <= row.source_start_us
+            or row.source_window_end_us <= row.source_start_us
+            or row.source_window_end_us > plan.source_video_duration_us
+            or row.output_audio_end_us != row.output_audio_start_us + row.measured_audio_duration_us
+            or row.signed_slack_us < 0
+            or (row.signed_slack_us == 0 and not plan.coverage_precision_verified)
+        ):
+            raise RenderError("A joint Segment has invalid rate, timing, or negative duration slack.")
+        mapped_start = map_time(row.source_start_us)
+        mapped_end = map_time(row.source_window_end_us)
+        slack = mapped_end - mapped_start - row.measured_audio_duration_us
+        if (
+            row.output_audio_start_us != mapped_start or row.signed_slack_us != slack
+            or row.output_audio_end_us > mapped_end or slack < 0
+        ):
+            raise RenderError("A joint Segment exceeds its transformed video coverage window.")
+        selected_interval = next((item for item in plan.video_intervals
+                                  if item.source_start_us == row.source_start_us), None)
+        if selected_interval is None or Decimal(str(row.video_speed)) != Decimal(str(selected_interval.speed)):
+            raise RenderError("The Segment's selected video speed disagrees with the global mapping.")
+    if any(
+        left.output_audio_end_us > right.output_audio_start_us
+        for left, right in zip(sorted(plan.segments, key=lambda item: item.output_audio_start_us),
+                               sorted(plan.segments, key=lambda item: item.output_audio_start_us)[1:])
+    ):
+        raise RenderError("The joint plan contains overlapping dubbed speech intervals.")
+    return tuple(intervals)
+
+
+def _validate_plan(plan: TTSTimelinePlan | JointTimelinePlan) -> tuple[_VideoInterval, ...]:
+    if isinstance(plan, JointTimelinePlan):
+        return _validate_joint_plan(plan)
+    return _validate_legacy_plan(plan)
 
 
 def _load_render_snapshot(
@@ -242,9 +395,11 @@ def _load_render_snapshot(
         source_path = resolve_storage_path(source_relative)
         if not source_path.is_file():
             raise RenderError("The Project original video is unavailable.")
-        plan = build_project_timeline_plan(
-            session, project_id, ignore_active_job_id=ignore_active_job_id
-        )
+        plan = _load_current_joint_plan(session, project_id, project.current_revision)
+        if plan is None:
+            plan = build_project_timeline_plan(
+                session, project_id, ignore_active_job_id=ignore_active_job_id
+            )
     except (UploadStorageError, OSError, ValueError) as error:
         if isinstance(error, RenderError):
             raise
@@ -253,7 +408,22 @@ def _load_render_snapshot(
     probe = _probe_source(source_path)
     if not probe.has_video:
         raise RenderError("The original video has no decodable video stream.")
-    if abs(probe.duration_ms - int(plan.original_video_duration_ms or 0)) > RENDER_DURATION_TOLERANCE_MS:
+    source_digest = _sha256_file(source_path)
+    if isinstance(plan, JointTimelinePlan):
+        exact_duration_us, measured_margin_us, source_frame_pts = _probe_joint_source_timing(source_path)
+        if exact_duration_us != plan.source_video_duration_us or source_digest != plan.source_video_sha256:
+            raise RenderError("The source video changed after joint timeline analysis.")
+        if plan.coverage_margin_us < measured_margin_us:
+            raise RenderError("Joint plan coverage margin is smaller than measured frame/sample precision.")
+        frames_per_interval = [
+            sum(Decimal(interval.source_start_us) <= frame_pts < Decimal(interval.source_end_us)
+                for frame_pts in source_frame_pts)
+            for interval in plan.video_intervals
+        ]
+        if not frames_per_interval or any(count == 0 for count in frames_per_interval) \
+                or sum(frames_per_interval) != len(source_frame_pts):
+            raise RenderError("A joint source partition contains no complete source video frame.")
+    elif abs(probe.duration_ms - int(plan.original_video_duration_ms or 0)) > RENDER_DURATION_TOLERANCE_MS:
         raise RenderError("The source video duration changed after timeline analysis.")
 
     segments = session.scalars(select(Segment).where(
@@ -278,9 +448,11 @@ def _load_render_snapshot(
         raise RenderError("The Project does not have a complete current TTS Artifact set.")
 
     plan_segment_by_id = {row.segment_id: row for row in plan.segments}
+    if isinstance(plan, JointTimelinePlan) and set(plan_segment_by_id) != {segment.id for segment in segments}:
+        raise RenderError("The joint plan does not include the exact current Segment set.")
     speech_inputs: list[_SpeechInput] = []
     artifact_snapshot_rows: list[tuple[object, ...]] = []
-    for segment in segments:
+    for segment_index, segment in enumerate(segments):
         artifact = artifact_by_segment[segment.id]
         job = session.get(Job, artifact.job_id)
         expected_reference = f"projects/{project_id}/jobs/{artifact.job_id}/tts/{segment.id}.mp3"
@@ -301,17 +473,49 @@ def _load_render_snapshot(
         if measured_duration != artifact.duration_ms:
             raise RenderError("A TTS Artifact duration does not match its published audio file.")
         row = plan_segment_by_id.get(segment.id)
-        if row is None or row.tts_audio_duration_ms != artifact.duration_ms:
-            raise RenderError("The timeline plan does not match the current TTS Artifacts.")
+        if isinstance(plan, JointTimelinePlan):
+            if row is None or row.artifact_id != artifact.id or row.rate_percent != artifact.rate_percent:
+                raise RenderError("The joint plan selected a different current TTS Artifact.")
+            try:
+                validated = validate_segment_tts_artifact(session, project, segment, [artifact], project.selected_voice)
+                measured_us = measured_audio_duration_us(validated.path)
+            except (ValueError, OSError) as error:
+                raise RenderError("The selected joint-plan audio Artifact is invalid.") from error
+            expected_start_us = seconds_to_us(Decimal(str(segment.start_seconds)))
+            expected_end_us = seconds_to_us(Decimal(str(segment.end_seconds)))
+            expected_window_end_us = (
+                seconds_to_us(Decimal(str(segments[segment_index + 1].start_seconds)))
+                if segment_index + 1 < len(segments) else plan.source_video_duration_us
+            )
+            if (
+                measured_us != row.measured_audio_duration_us
+                or row.source_start_us != expected_start_us
+                or row.source_end_us != expected_end_us
+                or row.source_window_end_us != expected_window_end_us
+                or row.position != segment.position
+            ):
+                raise RenderError("The persisted joint plan does not match current Segment or audio data.")
+            output_start_us = row.output_audio_start_us
+            duration_us = measured_us
+            output_start_ms = (output_start_us + 999) // 1000
+            duration_for_ms = (duration_us + 999) // 1000
+        else:
+            if row is None or row.tts_audio_duration_ms != artifact.duration_ms:
+                raise RenderError("The timeline plan does not match the current TTS Artifacts.")
+            output_start_us = duration_us = None
+            output_start_ms = row.output_audio_start_ms
+            duration_for_ms = artifact.duration_ms
         digest = _sha256_file(path)
         speech_inputs.append(_SpeechInput(
             segment_id=segment.id,
             artifact_id=artifact.id,
             path=path,
-            output_start_ms=row.output_audio_start_ms,
-            duration_ms=artifact.duration_ms,
+            output_start_ms=output_start_ms,
+            duration_ms=duration_for_ms,
             rate_percent=int(artifact.rate_percent),
             sha256=digest,
+            output_start_us=output_start_us,
+            duration_us=duration_us,
         ))
         artifact_snapshot_rows.append((
             artifact.id, artifact.segment_id, artifact.revision, artifact.storage_reference,
@@ -319,7 +523,6 @@ def _load_render_snapshot(
             artifact.rate_percent, artifact.is_current, artifact.job_id, digest,
         ))
 
-    source_digest = _sha256_file(source_path)
     artifact_snapshot = tuple(sorted(artifact_snapshot_rows, key=lambda row: str(row[0])))
     active_job = session.scalar(select(Job).where(
         Job.project_id == project_id,
@@ -381,30 +584,63 @@ def _format_seconds(milliseconds: int | Decimal) -> str:
     return f"{Decimal(milliseconds) / Decimal(1000):.6f}".rstrip("0").rstrip(".") or "0"
 
 
+def _format_microseconds(microseconds: int) -> str:
+    return f"{Decimal(microseconds) / Decimal(1_000_000):.6f}".rstrip("0").rstrip(".") or "0"
+
+
+def _planned_duration_us(plan: TTSTimelinePlan | JointTimelinePlan) -> int:
+    if isinstance(plan, JointTimelinePlan):
+        return plan.planned_output_duration_us
+    return int(plan.planned_output_video_duration_ms or 0) * 1000
+
+
+def _speech_interval_us(speech: _SpeechInput) -> tuple[int, int]:
+    if speech.output_start_us is not None and speech.duration_us is not None:
+        return speech.output_start_us, speech.output_start_us + speech.duration_us
+    return speech.output_start_ms * 1000, (speech.output_start_ms + speech.duration_ms) * 1000
+
+
 def build_render_filtergraph(snapshot: _RenderSnapshot) -> str:
     """Build an ordered interval partition exclusively from the validated planner output."""
     plan = snapshot.plan
     intervals = _validate_plan(plan)
+    if isinstance(plan, JointTimelinePlan):
+        speech_by_id = {speech.segment_id: speech for speech in snapshot.speech_inputs}
+        if len(speech_by_id) != len(snapshot.speech_inputs) or set(speech_by_id) != {row.segment_id for row in plan.segments}:
+            raise RenderError("Render inputs do not contain the exact joint-plan Segment set.")
+        for row in plan.segments:
+            speech = speech_by_id[row.segment_id]
+            if (
+                speech.artifact_id != row.artifact_id or speech.rate_percent != row.rate_percent
+                or speech.output_start_us != row.output_audio_start_us
+                or speech.duration_us != row.measured_audio_duration_us
+            ):
+                raise RenderError("Render inputs do not match the joint plan's selected Artifact and timing.")
     lines: list[str] = []
     video_labels = "".join(f"[vsrc{i}]" for i in range(len(intervals)))
     lines.append(f"[0:v:0]setpts=PTS-STARTPTS,split={len(intervals)}{video_labels};")
     for index, interval in enumerate(intervals):
+        start, end = _format_microseconds(interval.start_us), _format_microseconds(interval.end_us)
         lines.append(
-            f"[vsrc{index}]trim=start={_format_seconds(interval.start_ms)}:"
-            f"end={_format_seconds(interval.end_ms)},"
+            f"[vsrc{index}]trim=start={start}:end={end},settb=AVTB,"
             f"setpts=(PTS-STARTPTS)*{interval.factor:.9f}[v{index}];"
         )
     lines.append("".join(f"[v{i}]" for i in range(len(intervals)))
                  + f"concat=n={len(intervals)}:v=1:a=0[vout];")
 
-    planned_ms = plan.planned_output_video_duration_ms or 0
-    planned_seconds = _format_seconds(planned_ms)
+    planned_us = _planned_duration_us(plan)
+    planned_seconds = _format_microseconds(planned_us)
     dub_labels: list[str] = []
     for index, speech in enumerate(snapshot.speech_inputs):
+        if isinstance(plan, JointTimelinePlan):
+            sample = (speech.output_start_us * 48_000 + 999_999) // 1_000_000
+            delay = f"{sample}S:all=1"
+        else:
+            delay = f"{speech.output_start_ms}:all=1"
         lines.append(
             f"[{index + 1}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
             f"asetpts=PTS-STARTPTS,volume={snapshot.audio_settings.tts_gain:.6f},"
-            f"adelay=delays={speech.output_start_ms}:all=1[dub{index}];"
+            f"adelay=delays={delay}[dub{index}];"
         )
         dub_labels.append(f"[dub{index}]")
 
@@ -418,8 +654,8 @@ def build_render_filtergraph(snapshot: _RenderSnapshot) -> str:
         for index, interval in enumerate(intervals):
             atempo = Decimal(1) / interval.factor
             lines.append(
-                f"[asrc{index}]atrim=start={_format_seconds(interval.start_ms)}:"
-                f"end={_format_seconds(interval.end_ms)},asetpts=PTS-STARTPTS,"
+                f"[asrc{index}]atrim=start={_format_microseconds(interval.start_us)}:"
+                f"end={_format_microseconds(interval.end_us)},asetpts=PTS-STARTPTS,"
                 f"atempo={atempo:.9f}[a{index}];"
             )
         lines.append("".join(f"[a{i}]" for i in range(len(intervals)))
@@ -492,6 +728,118 @@ def _probe_rendered_media(path: Path) -> int:
     return duration_ms
 
 
+def _verify_joint_render_timing(path: Path, snapshot: _RenderSnapshot) -> None:
+    """Validate decoded frame/sample coverage with conservative integer bounds."""
+    plan = snapshot.plan
+    if not isinstance(plan, JointTimelinePlan):
+        raise RenderError("Strict timing verification requires an av-sync-v1 plan.")
+    result = _run([
+        "ffprobe", "-v", "error", "-show_frames", "-show_streams", "-show_format",
+        "-show_entries",
+        "format=duration:stream=codec_type,codec_name,pix_fmt,start_time,duration,sample_rate:"
+        "frame=media_type,best_effort_timestamp_time,pkt_duration_time,duration_time,nb_samples,sample_rate",
+        "-of", "json", str(path),
+    ], timeout=FFPROBE_TIMEOUT_SECONDS * 4,
+       failure_message="Rendered frame/sample timing could not be verified.")
+    try:
+        payload = json.loads(result.stdout)
+        streams = payload["streams"]
+        video_stream = next(row for row in streams if row.get("codec_type") == "video")
+        audio_stream = next(row for row in streams if row.get("codec_type") == "audio")
+        if (video_stream.get("codec_name") != "h264" or video_stream.get("pix_fmt") != "yuv420p"
+                or audio_stream.get("codec_name") != "aac"):
+            raise ValueError
+        video_frames_raw: list[tuple[int, int, int]] = []
+        audio_frames: list[tuple[int, int]] = []
+        for frame in payload["frames"]:
+            timestamp = Decimal(str(frame["best_effort_timestamp_time"]))
+            if frame.get("media_type") == "video":
+                duration = Decimal(str(frame.get("pkt_duration_time") or frame["duration_time"]))
+                start = int((timestamp * 1_000_000).to_integral_value(rounding="ROUND_CEILING"))
+                duration_us = int((duration * 1_000_000).to_integral_value(rounding="ROUND_FLOOR"))
+                end = start + duration_us
+                if end <= start:
+                    raise ValueError
+                video_frames_raw.append((start, end, duration_us))
+            elif frame.get("media_type") == "audio":
+                samples = int(frame["nb_samples"])
+                rate = int(frame.get("sample_rate") or audio_stream.get("sample_rate"))
+                if samples <= 0 or rate <= 0:
+                    raise ValueError
+                start_sample = int((timestamp * rate).to_integral_value(rounding="ROUND_CEILING"))
+                audio_frames.append((start_sample, start_sample + samples))
+        if not video_frames_raw or not audio_frames:
+            raise ValueError
+        _source_duration_us, _source_margin_us, source_frame_pts = _probe_joint_source_timing(snapshot.source_path)
+        if len(video_frames_raw) != len(source_frame_pts):
+            raise RenderError("Rendered output omitted or duplicated a source video frame.")
+        video_frames_raw.sort()
+        audio_frames.sort()
+        # For VFR output, each decoded picture remains displayed until the next
+        # presentation timestamp. Packet duration metadata may retain the source
+        # frame duration after setpts; derive interior coverage from adjacent PTS.
+        video_frames = [
+            (start, max(start + 1, video_frames_raw[index + 1][0]) if index + 1 < len(video_frames_raw) else end)
+            for index, (start, end, _duration) in enumerate(video_frames_raw)
+        ]
+        max_frame_us = max(end - start for start, end in video_frames)
+        max_sample_frame_us = max(
+            int((Decimal(end - start) * 1_000_000 / Decimal(48_000)).to_integral_value(rounding="ROUND_CEILING"))
+            for start, end in audio_frames
+        )
+        video_coverage: list[list[int]] = []
+        for start, end in video_frames:
+            if video_coverage and start <= video_coverage[-1][1]:
+                video_coverage[-1][1] = max(video_coverage[-1][1], end)
+            else:
+                video_coverage.append([start, end])
+
+        audio_coverage_samples: list[list[int]] = []
+        for start, end in audio_frames:
+            if audio_coverage_samples and start <= audio_coverage_samples[-1][1] + 1:
+                audio_coverage_samples[-1][1] = max(audio_coverage_samples[-1][1], end)
+            else:
+                audio_coverage_samples.append([start, end])
+
+        def is_covered(coverage: list[list[int]], start: int, end: int) -> bool:
+            return any(left <= start and right >= end for left, right in coverage)
+
+        required_ends = []
+        for speech in snapshot.speech_inputs:
+            start, end = _speech_interval_us(speech)
+            sample_start = (start * 48_000 + 999_999) // 1_000_000
+            sample_end = (end * 48_000 + 999_999) // 1_000_000
+            start_us = (sample_start * 1_000_000 + 47_999) // 48_000
+            end_us = (sample_end * 1_000_000 + 47_999) // 48_000
+            if not is_covered(video_coverage, start_us, end_us):
+                raise RenderError("Rendered video frames do not cover a complete dubbed Segment interval.")
+            if not any(left <= sample_start and right >= sample_end
+                       for left, right in audio_coverage_samples):
+                raise RenderError("Rendered audio samples do not cover a complete dubbed Segment interval.")
+            required_ends.append(end_us)
+        final_required_audio_us = max(required_ends, default=0)
+        actual_video_end_us = video_coverage[-1][1]
+        actual_audio_end_us = int((Decimal(audio_frames[-1][1]) * 1_000_000 / Decimal(48_000))
+                                  .to_integral_value(rounding="ROUND_FLOOR"))
+        planned_us = plan.planned_output_duration_us
+        format_duration = Decimal(str(payload["format"]["duration"]))
+        format_end_us = int((format_duration * 1_000_000).to_integral_value(rounding="ROUND_FLOOR"))
+        if (
+            actual_video_end_us < final_required_audio_us
+            or actual_audio_end_us < final_required_audio_us
+            or actual_video_end_us < format_end_us - max_frame_us
+            or abs(actual_video_end_us - planned_us) > max_frame_us
+            or abs(format_end_us - actual_video_end_us) > max_frame_us
+            or abs(format_end_us - planned_us) > max_frame_us
+            or max_sample_frame_us <= 0
+        ):
+            raise RenderError("Rendered frame/sample coverage is shorter than the authoritative joint timeline.")
+    except RenderError:
+        raise
+    except (KeyError, StopIteration, TypeError, ValueError, ArithmeticError, json.JSONDecodeError) as error:
+        raise RenderError("Rendered output has incomplete frame/sample timing metadata.") from error
+
+
 def render_media(
     snapshot: _RenderSnapshot,
     output_path: Path,
@@ -513,9 +861,10 @@ def render_media(
         envelope_path = envelope_path or output_path.with_name(f"{output_path.stem}-ducking.wav")
         write_ducking_envelope(
             envelope_path,
-            ((item.output_start_ms, item.output_start_ms + item.duration_ms)
-             for item in snapshot.speech_inputs),
-            duration_ms=snapshot.plan.planned_output_video_duration_ms or 0,
+            ((start_us // 1000, (end_us + 999) // 1000)
+             for item in snapshot.speech_inputs
+             for start_us, end_us in [_speech_interval_us(item)]),
+            duration_ms=(_planned_duration_us(snapshot.plan) + 999) // 1000,
             settings=snapshot.audio_settings,
         )
         generated_envelope = True
@@ -531,9 +880,12 @@ def render_media(
     if not output_path.is_file() or output_path.stat().st_size <= 0:
         raise RenderError("FFmpeg did not produce a non-empty MP4.")
     actual_duration_ms = _probe_rendered_media(output_path)
-    planned_duration_ms = snapshot.plan.planned_output_video_duration_ms or 0
-    if abs(actual_duration_ms - planned_duration_ms) > RENDER_DURATION_TOLERANCE_MS:
-        raise RenderError("Rendered MP4 duration differs from the authoritative plan by more than 100 ms.")
+    if isinstance(snapshot.plan, JointTimelinePlan):
+        _verify_joint_render_timing(output_path, snapshot)
+    else:
+        planned_duration_ms = snapshot.plan.planned_output_video_duration_ms or 0
+        if abs(actual_duration_ms - planned_duration_ms) > RENDER_DURATION_TOLERANCE_MS:
+            raise RenderError("Rendered MP4 duration differs from the authoritative plan by more than 100 ms.")
     _run(
         ["ffmpeg", "-hide_banner", "-nostdin", "-v", "error", "-i", str(output_path), "-f", "null", "-"],
         timeout=FFMPEG_TIMEOUT_SECONDS,
@@ -604,14 +956,18 @@ def render_project(
         stage_callback("rendering_video")
         actual_duration_ms = render_media(snapshot, output, filter_script_path=filter_script)
         stage_callback("verifying_render")
+        planned_duration_ms = (_planned_duration_us(snapshot.plan) + 999) // 1000
+        is_joint = isinstance(snapshot.plan, JointTimelinePlan)
         metadata = {
-            "version": "timeline-render-v2",
+            "version": "timeline-render-v3" if is_joint else "timeline-render-v2",
+            "plan_version": snapshot.plan.plan_version if is_joint else "timeline-v1",
             "project_id": str(project_id),
             "job_id": str(job_id),
             "input_revision": input_revision,
             "input_fingerprint": snapshot.fingerprint,
             "source_sha256": snapshot.source_sha256,
-            "planned_duration_ms": snapshot.plan.planned_output_video_duration_ms,
+            "planned_duration_ms": planned_duration_ms,
+            "planned_duration_us": _planned_duration_us(snapshot.plan),
             "actual_duration_ms": actual_duration_ms,
             "render_sha256": _sha256_file(output),
             "duration_tolerance_ms": RENDER_DURATION_TOLERANCE_MS,
@@ -619,11 +975,19 @@ def render_project(
             "audio_settings": snapshot.audio_settings.model_dump(mode="json"),
             "video_encoder": "libx264",
             "audio_encoder": "aac",
-            "stretch_operations": [operation.model_dump(mode="json") for operation in snapshot.plan.stretch_operations],
+            "stretch_operations": (
+                [interval.model_dump(mode="json") for interval in snapshot.plan.video_intervals]
+                if is_joint else [operation.model_dump(mode="json") for operation in snapshot.plan.stretch_operations]
+            ),
+            "joint_video_intervals": (
+                [interval.model_dump(mode="json") for interval in snapshot.plan.video_intervals]
+                if is_joint else None
+            ),
             "speech_artifacts": [
                 {"segment_id": str(item.segment_id), "artifact_id": str(item.artifact_id),
                  "sha256": item.sha256, "output_start_ms": item.output_start_ms,
-                 "duration_ms": item.duration_ms, "rate_percent": item.rate_percent}
+                 "duration_ms": item.duration_ms, "rate_percent": item.rate_percent,
+                 "output_start_us": item.output_start_us, "duration_us": item.duration_us}
                 for item in snapshot.speech_inputs
             ],
         }
@@ -696,14 +1060,17 @@ def _read_render_metadata(path: Path) -> dict[str, object] | None:
         payload = json.loads(path.with_name("render.json").read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
-    return payload if isinstance(payload, dict) and payload.get("version") in {"timeline-render-v1", "timeline-render-v2"} else None
+    return payload if isinstance(payload, dict) and payload.get("version") in {
+        "timeline-render-v1", "timeline-render-v2", "timeline-render-v3"
+    } else None
 
 
 def get_current_render(
     session: Session, project_id: UUID
 ) -> tuple[RenderArtifactRead, Path]:
     """Return a render only if the current persisted inputs still match its provenance."""
-    if session.get(Project, project_id) is None:
+    project = session.get(Project, project_id)
+    if project is None:
         raise ProjectNotFoundError
     rows = session.scalars(select(Artifact).where(
         Artifact.project_id == project_id,
@@ -716,9 +1083,15 @@ def get_current_render(
     job = session.get(Job, artifact.job_id)
     expected = f"projects/{project_id}/jobs/{artifact.job_id}/render/rendered.mp4"
     if (
-        artifact.segment_id is not None or artifact.storage_reference != expected
+        artifact.project_id != project_id
+        or artifact.revision != project.current_revision
+        or artifact.segment_id is not None
+        or artifact.storage_reference != expected
         or artifact.duration_ms is None or artifact.duration_ms <= 0
-        or job is None or job.operation_type != "render"
+        or job is None
+        or job.project_id != project_id
+        or job.input_revision != project.current_revision
+        or job.operation_type != "render"
         or job.status != JobStatus.SUCCEEDED.value or job.stage != "render_complete"
     ):
         raise LookupError

@@ -6,11 +6,13 @@ import asyncio
 import tempfile
 import unittest
 import shutil
+import uuid
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
 import aiohttp
+from edge_tts.exceptions import NoAudioReceived
 
 from app.services.tts import (
     TTSError,
@@ -134,6 +136,70 @@ class EdgeTtsServiceTests(unittest.IsolatedAsyncioTestCase):
             ])
             self.assertTrue(destination.is_file())
 
+    async def test_no_audio_received_retries_and_can_succeed(self) -> None:
+        attempts = 0
+        request_attempts: list[int] = []
+        sleeps: list[float] = []
+
+        class Communicate:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            async def save(self, destination: str) -> None:
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise NoAudioReceived("no provider audio")
+                Path(destination).write_bytes(b"mocked-audio")
+
+        async def no_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "app.services.tts.measured_audio_duration_ms", return_value=900
+        ), patch("app.services.tts.normalize_audio_file", side_effect=_copy_fake_normalizer(900)):
+            duration = await synthesize_segment(
+                "Xin chào", Path(temp_dir) / "segment.mp3", voice="vi-VN-HoaiMyNeural",
+                rate_percent=22, semaphore=asyncio.Semaphore(1), communicate_factory=Communicate,
+                retry_sleep=no_sleep, segment_id=uuid.UUID(int=1), artifact_id=uuid.UUID(int=2),
+                attempt_callback=request_attempts.append,
+            )
+
+        self.assertEqual(duration, 900)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(request_attempts, [1, 2])
+        self.assertEqual(sleeps, [0.5])
+
+    async def test_repeated_no_audio_received_stops_at_three_requests(self) -> None:
+        attempts = 0
+        request_attempts: list[int] = []
+        sleeps: list[float] = []
+
+        class Communicate:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            async def save(self, _destination: str) -> None:
+                nonlocal attempts
+                attempts += 1
+                raise NoAudioReceived("no provider audio")
+
+        async def no_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(TTSError):
+                await synthesize_segment(
+                    "Xin chào", Path(temp_dir) / "segment.mp3", voice="vi-VN-HoaiMyNeural",
+                    rate_percent=35, semaphore=asyncio.Semaphore(1), communicate_factory=Communicate,
+                    retry_sleep=no_sleep, segment_id=uuid.UUID(int=3), artifact_id=uuid.UUID(int=4),
+                    attempt_callback=request_attempts.append,
+                )
+
+        self.assertEqual(attempts, 3)
+        self.assertEqual(request_attempts, [1, 2, 3])
+        self.assertEqual(sleeps, [0.5, 1.0])
+
     async def test_permanent_failure_is_not_retried(self) -> None:
         for provider_error in (
             ValueError("invalid voice configuration"),
@@ -157,6 +223,34 @@ class EdgeTtsServiceTests(unittest.IsolatedAsyncioTestCase):
                         rate_percent=0, semaphore=asyncio.Semaphore(1), communicate_factory=Communicate,
                     )
             self.assertEqual(attempts, 1)
+
+    async def test_failed_attempt_logs_only_safe_exception_metadata(self) -> None:
+        class Communicate:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            async def save(self, _destination: str) -> None:
+                raise ValueError("API_KEY=private-provider-detail")
+
+        with tempfile.TemporaryDirectory() as temp_dir, self.assertLogs(
+            "autodub.tts", level="WARNING"
+        ) as captured:
+            with self.assertRaises(TTSError):
+                await synthesize_segment(
+                    "Xin chào", Path(temp_dir) / "bad.mp3", voice="vi-VN-HoaiMyNeural",
+                    rate_percent=0, semaphore=asyncio.Semaphore(1), communicate_factory=Communicate,
+                    segment_id=uuid.UUID(int=5), artifact_id=uuid.UUID(int=6),
+                )
+
+        output = "\n".join(captured.output)
+        self.assertIn("segment_id=00000000-0000-0000-0000-000000000005", output)
+        self.assertIn("artifact_id=00000000-0000-0000-0000-000000000006", output)
+        self.assertIn("rate_percent=0", output)
+        self.assertIn("attempt=1/3", output)
+        self.assertIn("exception_class=ValueError", output)
+        self.assertIn("http_status=None", output)
+        self.assertNotIn("private-provider-detail", output)
+        self.assertNotIn("API_KEY", output)
 
     async def test_repeated_transient_failure_stops_at_retry_limit(self) -> None:
         attempts = 0

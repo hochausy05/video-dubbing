@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 import uuid
@@ -10,13 +11,14 @@ from pathlib import Path, PurePosixPath
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from edge_tts.exceptions import NoAudioReceived
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.main import app
 from app.models import Artifact, Job, Project, Segment
 from app.models.base import Base
-from app.services.tts import TTSError, translation_fingerprint
+from app.services.tts import TTSError, synthesize_segment, translation_fingerprint
 from app.services.audio_normalization import write_normalization_metadata
 from app.services.tts_optimization import (
     enqueue_tts_optimization,
@@ -108,7 +110,6 @@ class TtsOptimizationTests(unittest.TestCase):
         return (
             patch("app.services.uploads.get_storage_root", return_value=self.storage),
             patch("app.services.tts_optimization.get_edge_tts_voice", return_value=VOICE),
-            patch("app.services.tts_optimization.get_edge_tts_concurrency", return_value=1),
             patch("app.services.tts_timeline.get_edge_tts_voice", return_value=VOICE),
             patch(
                 "app.services.tts_timeline.resolve_storage_path",
@@ -117,12 +118,39 @@ class TtsOptimizationTests(unittest.TestCase):
             patch("app.services.tts_timeline._probe_source_video_duration_ms", return_value=self.video_duration_ms),
         )
 
-    def _run(self, measured_durations: dict[int, int], *, max_rate: int = 35, attempts: int = 4):
+    def _run(
+        self,
+        measured_durations: dict[int, int],
+        *,
+        max_rate: int = 35,
+        attempts: int = 4,
+        provider_attempts_per_operation: int = 1,
+    ):
         requested_rates: list[tuple[uuid.UUID, int]] = []
+        self.synthesis_operations: list[tuple[uuid.UUID, uuid.UUID, int]] = []
+        self.synthesis_attempt_events: list[tuple[uuid.UUID, uuid.UUID, int, int]] = []
+        self.maximum_active_syntheses = 0
+        active_syntheses = 0
 
-        async def synthesize(text: str, destination: Path, *, rate_percent: int, **_kwargs) -> int:
-            segment_id = uuid.UUID(destination.name.rsplit("-", 1)[0])
+        async def synthesize(
+            text: str,
+            destination: Path,
+            *,
+            rate_percent: int,
+            segment_id: uuid.UUID,
+            artifact_id: uuid.UUID,
+            attempt_callback,
+            **_kwargs,
+        ) -> int:
+            nonlocal active_syntheses
+            active_syntheses += 1
+            self.maximum_active_syntheses = max(self.maximum_active_syntheses, active_syntheses)
+            self.synthesis_operations.append((segment_id, artifact_id, rate_percent))
             requested_rates.append((segment_id, rate_percent))
+            for attempt_number in range(1, provider_attempts_per_operation + 1):
+                attempt_callback(attempt_number)
+                self.synthesis_attempt_events.append((segment_id, artifact_id, rate_percent, attempt_number))
+            await asyncio.sleep(0.001)
             destination.write_bytes(b"new measured audio")
             write_normalization_metadata(destination, {
                 "version": "boundary-silence-v1",
@@ -132,6 +160,7 @@ class TtsOptimizationTests(unittest.TestCase):
                 "trimmed": False,
                 "skipped_reason": "Synthetic optimizer fixture.",
             })
+            active_syntheses -= 1
             return measured_durations[rate_percent]
 
         patches = self._patches()
@@ -243,6 +272,48 @@ class TtsOptimizationTests(unittest.TestCase):
             (SEGMENT_IDS[0], 6), (SEGMENT_IDS[1], 6),
             (SEGMENT_IDS[0], 14), (SEGMENT_IDS[1], 14),
         ])
+        self.assertEqual(self.maximum_active_syntheses, 1)
+        self.assertEqual(len(self.synthesis_attempt_events), 4)
+        self.assertEqual(len({artifact_id for _, artifact_id, _ in self.synthesis_operations}), 4)
+        with Session(self.engine) as session:
+            for segment_id in SEGMENT_IDS:
+                artifact = session.scalar(select(Artifact).where(
+                    Artifact.segment_id == segment_id, Artifact.is_current.is_(True)
+                ))
+                published_candidate = next(
+                    artifact_id
+                    for candidate_segment_id, artifact_id, rate in reversed(self.synthesis_operations)
+                    if candidate_segment_id == segment_id and rate == 14
+                )
+                self.assertEqual(artifact.id, published_candidate)
+
+    def test_retry_request_budget_is_capped_by_remaining_rates_and_three_attempts(self) -> None:
+        with Session(self.engine) as session, session.begin():
+            session.execute(delete(Artifact).where(Artifact.project_id == PROJECT_ID))
+            session.execute(delete(Segment).where(Segment.project_id == PROJECT_ID))
+            session.execute(delete(Job).where(Job.project_id == PROJECT_ID))
+            session.execute(delete(Project).where(Project.id == PROJECT_ID))
+        self._seed([1_800, 1_800], base_rates=[20, 20])
+        self.video_duration_ms = 2_000
+
+        count, requested = self._run(
+            {22: 1_800, 35: 1_800}, provider_attempts_per_operation=3
+        )
+
+        self.assertEqual(count, 0)
+        self.assertEqual(requested, [
+            (SEGMENT_IDS[0], 22), (SEGMENT_IDS[1], 22),
+            (SEGMENT_IDS[0], 35), (SEGMENT_IDS[1], 35),
+        ])
+        self.assertEqual(len(self.synthesis_operations), 4)
+        self.assertEqual(len(self.synthesis_attempt_events), 12)
+        self.assertEqual(self.maximum_active_syntheses, 1)
+        with Session(self.engine) as session:
+            artifacts = session.scalars(select(Artifact).where(
+                Artifact.project_id == PROJECT_ID, Artifact.is_current.is_(True)
+            )).all()
+            self.assertEqual(len(artifacts), 2)
+            self.assertEqual({artifact.job_id for artifact in artifacts}, {TTS_JOB_ID})
 
     def test_maximum_rate_may_leave_reported_excess_without_rendering(self) -> None:
         with Session(self.engine) as session, session.begin():
@@ -288,15 +359,32 @@ class TtsOptimizationTests(unittest.TestCase):
             current = session.scalar(select(Artifact).where(Artifact.is_current.is_(True)))
             self.assertEqual((current.job_id, current.duration_ms), (TTS_JOB_ID, 1_800))
 
-    def test_transient_provider_failure_preserves_current_artifact_and_worker_fails_job(self) -> None:
-        async def fail(*_args, **_kwargs):
-            raise TTSError("Edge-TTS unavailable")
+    def test_no_audio_after_retry_limit_preserves_current_artifact_and_fails_job(self) -> None:
+        provider_attempts = 0
+
+        class Communicate:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            async def save(self, _destination: str) -> None:
+                nonlocal provider_attempts
+                provider_attempts += 1
+                raise NoAudioReceived("provider response body must not be logged")
+
+        async def no_sleep(_delay: float) -> None:
+            return None
+
+        async def synthesize_without_backoff(*args, **kwargs) -> int:
+            return await synthesize_segment(*args, retry_sleep=no_sleep, **kwargs)
 
         patches = self._patches()
         for item in patches:
             item.start()
         try:
-            with patch("app.services.tts_optimization.synthesize_segment", side_effect=fail):
+            with (
+                patch("app.services.tts_optimization.synthesize_segment", side_effect=synthesize_without_backoff),
+                patch("app.services.tts.edge_tts.Communicate", Communicate),
+            ):
                 process_claimed_job(self.engine, OPTIMIZATION_JOB_ID)
         finally:
             for item in reversed(patches):
@@ -305,6 +393,7 @@ class TtsOptimizationTests(unittest.TestCase):
             job = session.get(Job, OPTIMIZATION_JOB_ID)
             artifacts = session.scalars(select(Artifact).where(Artifact.project_id == PROJECT_ID)).all()
             self.assertEqual(job.status, "failed")
+            self.assertEqual(provider_attempts, 3)
             self.assertEqual(len(artifacts), 1)
             self.assertTrue(artifacts[0].is_current)
 

@@ -3,6 +3,7 @@
 ## 1. Sources of truth
 
 - `TASKS.md`: task status and task-level acceptance.
+- `docs/tasks/task_<TASK_ID>.md`: detailed requirements, agreed decisions, constraints, and acceptance criteria for an individual active or pending task, when such a file exists.
 - `PLAN.md`: phase order and exit gates.
 - `docs/PRD.md`: product scope and behavior.
 - `docs/ARCHITECTURE.md`: technical boundaries and data flow.
@@ -16,6 +17,7 @@ Do not duplicate changing facts across files. If a fact belongs to one source of
 
 - Follow the routing table in `AGENTS.md`; never read every Markdown file by default.
 - Always read this file and only the current task block/matching task line in `TASKS.md`.
+- Read the corresponding docs/tasks/task_<TASK_ID>.md in full when it exists. Do not load specifications for unrelated tasks unless explicitly requested.
 - Search headings and requirement/task IDs before opening long sections.
 - Load a second document only when the task type requires it or a concrete ambiguity remains.
 - Inspect relevant code and tests before assuming a planned document reflects implementation.
@@ -26,6 +28,10 @@ Do not duplicate changing facts across files. If a fact belongs to one source of
 - State the task goal, scope, and expected files before editing.
 - Preserve unrelated developer changes and keep each change reviewable.
 - Ask before materially changing the stack, MVP scope, or architecture.
+- When a task specification exists in docs/tasks/task_<TASK_ID>.md, implement only its agreed requirements, constraints, and acceptance criteria. Do not infer missing decisions or expand its scope without developer approval.
+- Keep the corresponding entry in TASKS.md unchecked ([ ]) until all applicable acceptance criteria are satisfied by real, reproducible evidence.
+- Once the task meets its acceptance criteria, update its existing TASKS.md entry to checked ([x]) and record the verification evidence. Do not create a duplicate completion entry.
+- A task specification file must not be deleted automatically, even after the task is marked complete. Delete it only after explicit developer confirmation, preserving any enduring technical decisions in their authoritative documents.
 - A functional task is complete only when its `TASKS.md` criteria pass with real, reproducible evidence.
 - A documentation task requires consistency, path/link, and status checks; it does not require fake runtime tests.
 - Record unverified behavior, remaining limits, and failed checks explicitly.

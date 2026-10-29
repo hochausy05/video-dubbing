@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 
 type JobStatus = "queued" | "running" | "succeeded" | "failed" | "interrupted";
 
@@ -255,6 +255,8 @@ function App() {
   const [enqueueErrorsByProject, setEnqueueErrorsByProject] = useState<Record<string, string>>({});
   const [enqueueingProjects, setEnqueueingProjects] = useState<Record<string, boolean>>({});
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const selectedProjectIdRef = useRef<string | null>(null);
+  selectedProjectIdRef.current = selectedProject?.id ?? null;
   const [segments, setSegments] = useState<Segment[]>([]);
   const [segmentsLoading, setSegmentsLoading] = useState(false);
   const [segmentsError, setSegmentsError] = useState<string | null>(null);
@@ -271,6 +273,8 @@ function App() {
   const [ttsAudioBySegment, setTtsAudioBySegment] = useState<Record<string, TTSArtifact>>({});
   const [ttsAudioError, setTtsAudioError] = useState<string | null>(null);
   const [timelinePlan, setTimelinePlan] = useState<TTSTimelinePlan | null>(null);
+  const [timelineStale, setTimelineStale] = useState(false);
+  const timelineRequestId = useRef(0);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [timelineNotice, setTimelineNotice] = useState<string | null>(null);
@@ -344,6 +348,7 @@ function App() {
   }, []);
 
   async function openProject(project: Project, updateUrl = true) {
+    timelineRequestId.current += 1;
     setSelectedProject(project);
     setSegments([]);
     setSegmentsLoading(true);
@@ -355,6 +360,8 @@ function App() {
     setTtsAudioBySegment({});
     setTtsAudioError(null);
     setTimelinePlan(null);
+    setTimelineStale(false);
+    setTimelineLoading(false);
     setTimelineError(null);
     setTimelineNotice(null);
     setOptimizationResult(null);
@@ -422,7 +429,6 @@ function App() {
     const video = document.querySelector<HTMLVideoElement>(".project-video");
     if (video) {
       video.currentTime = segment.start_seconds;
-      void video.play().catch(() => undefined);
     }
   }
 
@@ -444,18 +450,32 @@ function App() {
 
   async function analyzeTtsTimeline() {
     if (!selectedProject) return;
+    const requestId = ++timelineRequestId.current;
     setTimelineLoading(true);
     setTimelineError(null);
     setTimelineNotice(null);
-    setTimelinePlan(null);
     try {
       const response = await fetch(`/api/projects/${selectedProject.id}/tts-timeline-plan`);
       if (!response.ok) throw new Error(await readError(response));
-      setTimelinePlan((await response.json()) as TTSTimelinePlan);
+      const plan = (await response.json()) as TTSTimelinePlan;
+      if (plan.project_id !== selectedProject.id || !Array.isArray(plan.issues)
+        || !Array.isArray(plan.segments) || !Array.isArray(plan.stretch_operations)
+        || typeof plan.renderable !== "boolean" || !Number.isInteger(plan.blocking_issue_count)) {
+        throw new Error("The timeline response was incomplete or belonged to another Project.");
+      }
+      if (requestId !== timelineRequestId.current || selectedProjectIdRef.current !== selectedProject.id) return;
+      setTimelinePlan(plan);
+      setTimelineStale(false);
     } catch (requestError) {
-      setTimelineError(requestError instanceof Error ? requestError.message : "Unable to analyze the TTS timeline.");
+      const message = requestError instanceof Error ? requestError.message : "Unable to analyze the TTS timeline.";
+      const staleAudio = /artifact does not match|artifact.*stale|translation.*changed|fingerprint/i.test(message);
+      if (requestId !== timelineRequestId.current || selectedProjectIdRef.current !== selectedProject.id) return;
+      if (staleAudio) setTimelineStale(true);
+      setTimelineError(staleAudio
+        ? "Audio chưa khớp với bản dịch hiện tại. Hãy tạo lại giọng đọc cho các câu đã chỉnh sửa rồi phân tích timeline lần nữa."
+        : message);
     } finally {
-      setTimelineLoading(false);
+      if (requestId === timelineRequestId.current) setTimelineLoading(false);
     }
   }
 
@@ -481,28 +501,31 @@ function App() {
     }
   }
 
-  function locateReadinessSegment(segmentId: string) {
+  function locateReadinessSegment(segmentId: string): boolean {
+    const segment = segments.find((item) => item.id === segmentId);
     const row = document.getElementById(`segment-${segmentId}`);
     const list = row?.closest<HTMLOListElement>(".segment-list");
-    if (row && list) {
-      const listBounds = list.getBoundingClientRect();
-      const rowBounds = row.getBoundingClientRect();
-      list.scrollBy({
-        top: rowBounds.top - listBounds.top - (list.clientHeight - row.clientHeight) / 2,
-        behavior: "smooth",
-      });
-      setFocusedSegmentId(segmentId);
+    if (!segment || !row || !list) {
+      setTimelineNotice("This Segment is no longer available in the current transcript. Refresh the Project data before editing it.");
+      return false;
     }
-    const segment = segments.find((item) => item.id === segmentId);
-    if (segment) seekToSegment(segment);
+    const listBounds = list.getBoundingClientRect();
+    const rowBounds = row.getBoundingClientRect();
+    list.scrollBy({
+      top: rowBounds.top - listBounds.top - (list.clientHeight - row.clientHeight) / 2,
+      behavior: "smooth",
+    });
+    setFocusedSegmentId(segmentId);
+    seekToSegment(segment);
+    return true;
   }
 
-  function beginTranslationEdit(segment: Segment) {
+  function beginTranslationEdit(segment: Segment): boolean {
     if (editingSegmentId && editingSegmentId !== segment.id) {
       const currentSegment = segments.find((item) => item.id === editingSegmentId);
       if (currentSegment && translationDraft.trim() !== (currentSegment.translated_text ?? "").trim()) {
         setTimelineNotice("Save or cancel the current translation before opening another Segment. Your unsaved text is preserved.");
-        return;
+        return false;
       }
     }
     setEditingSegmentId(segment.id);
@@ -512,6 +535,7 @@ function App() {
       delete next[segment.id];
       return next;
     });
+    return true;
   }
 
   function cancelTranslationEdit(segmentId: string) {
@@ -546,9 +570,12 @@ function App() {
       const updatedSegment = (await response.json()) as Segment;
       setSegments((current) => current.map((item) => item.id === updatedSegment.id ? updatedSegment : item));
       if (selectedProject) await loadProjectTtsAudio(selectedProject.id);
-      setTimelinePlan(null);
       setTimelineError(null);
-      setTimelineNotice("Translation saved. Existing audio for this Segment may now be outdated. Regenerate full-Project TTS, then analyze the timeline again.");
+      const translationChanged = updatedSegment.translated_text !== segment.translated_text;
+      if (translationChanged) setTimelineStale(true);
+      setTimelineNotice(translationChanged
+        ? "Translation saved. The previous timeline blockers remain as references, but their measurements are stale. Regenerate TTS for changed audio, then analyze the timeline again."
+        : "Translation saved. No translation change was detected.");
       setRenderArtifact(null);
       setRenderError(null);
       setOptimizationResult(null);
@@ -603,8 +630,10 @@ function App() {
             return next;
           });
           if (persistedJob.job_type === "tts" && persistedJob.status === "succeeded") {
-            setTimelinePlan(null);
-            setTimelineNotice("Full-Project TTS generation completed. Analyze the timeline again to verify the newly measured audio. Previous optimized speaking rates were reset to the standard adaptive rates; run duration optimization again if needed.");
+            if (selectedProjectIdRef.current === projectId) {
+              setTimelineStale(true);
+              setTimelineNotice("TTS generation completed. The previous timeline remains available as stale reference. Analyze again to check the newly published audio; regenerated Segments may need duration optimization.");
+            }
             void loadProjectTtsAudio(projectId);
           }
           if (["tts", "tts_optimize", "tts_normalize"].includes(persistedJob.job_type ?? "") && persistedJob.status === "succeeded") {
@@ -612,8 +641,9 @@ function App() {
             void loadCurrentRender(projectId);
           }
           if (persistedJob.job_type === "tts" && ["failed", "interrupted"].includes(persistedJob.status)) {
-            setTimelinePlan(null);
-            setTimelineNotice("TTS regeneration did not complete. Previously published audio was preserved; analyze the timeline to check whether it still matches the saved translations.");
+            if (selectedProjectIdRef.current === projectId) {
+              setTimelineNotice("TTS regeneration did not complete. Previously published audio was preserved; analyze the timeline to check whether it still matches the saved translations.");
+            }
             void loadProjectTtsAudio(projectId);
           }
           if (persistedJob.job_type === "render") {
@@ -674,15 +704,8 @@ function App() {
     if (!["succeeded", "failed", "interrupted"].includes(selectedJob.status)) return;
     void loadTtsOptimizationResult(selectedProject.id, selectedJob.id);
     if (selectedJob.status === "succeeded") {
-      setTimelineNotice(null);
-      void fetch(`/api/projects/${selectedProject.id}/tts-timeline-plan`)
-        .then(async (response) => {
-          if (!response.ok) throw new Error(await readError(response));
-          setTimelinePlan((await response.json()) as TTSTimelinePlan);
-        })
-        .catch((planError: unknown) => setTimelineError(
-          planError instanceof Error ? planError.message : "Unable to refresh the TTS timeline."
-        ));
+      setTimelineStale(true);
+      setTimelineNotice("TTS optimization completed. The previous analysis is retained as a stale reference; analyze again to review current measurements.");
       void loadProjectTtsAudio(selectedProject.id);
     }
   }, [selectedProject?.id, selectedJob?.id, selectedJob?.status, selectedJob?.job_type]);
@@ -691,18 +714,10 @@ function App() {
     if (!selectedProject || selectedJob?.job_type !== "tts_normalize") return;
     void loadTtsNormalizationResult(selectedProject.id, selectedJob.id);
     if (selectedJob.status === "succeeded") {
-      setTimelinePlan(null);
+      setTimelineStale(true);
       setOptimizationResult(null);
       setOptimizationError(null);
-      setTimelineNotice("TTS audio normalization completed. Timeline analysis was refreshed from the newly published audio.");
-      void fetch(`/api/projects/${selectedProject.id}/tts-timeline-plan`)
-        .then(async (response) => {
-          if (!response.ok) throw new Error(await readError(response));
-          setTimelinePlan((await response.json()) as TTSTimelinePlan);
-        })
-        .catch((planError: unknown) => setTimelineError(
-          planError instanceof Error ? planError.message : "Unable to refresh the TTS timeline."
-        ));
+      setTimelineNotice("TTS audio normalization completed. The previous analysis is retained as a stale reference; analyze again to review current measurements.");
       void loadProjectTtsAudio(selectedProject.id);
     }
   }, [selectedProject?.id, selectedJob?.id, selectedJob?.status, selectedJob?.job_type]);
@@ -743,7 +758,6 @@ function App() {
   }
 
   async function startTts(project: Project) {
-    setTimelinePlan(null);
     setTimelineError(null);
     setTimelineNotice(null);
     setOptimizationResult(null);
@@ -755,9 +769,9 @@ function App() {
       if (!response.ok) throw new Error(await readError(response));
       const created = (await response.json()) as JobState;
       setJobsByProject((current) => ({ ...current, [project.id]: { ...created, job_type: "tts" } }));
-      setTimelineNotice("Full-Project TTS regeneration is queued. It uses standard adaptive rates and does not preserve previous TTS-03 optimized rates; you may need to optimize again afterward.");
+      setTimelineNotice("Incremental TTS generation is queued. Only missing or invalid audio will be regenerated; valid audio and its optimized rates are preserved.");
     } catch (enqueueError) {
-      setTimelineNotice("TTS regeneration was not queued. The previous timeline result was cleared; analyze the persisted data again before relying on it.");
+      setTimelineNotice("TTS regeneration was not queued. The previous timeline analysis remains available.");
       setEnqueueErrorsByProject((current) => ({
         ...current,
         [project.id]: enqueueError instanceof Error ? enqueueError.message : "Unable to start Vietnamese voice generation.",
@@ -768,7 +782,6 @@ function App() {
   }
 
   async function optimizeTtsDuration(project: Project) {
-    setTimelinePlan(null);
     setTimelineError(null);
     setTimelineNotice(null);
     setOptimizationResult(null);
@@ -782,7 +795,7 @@ function App() {
       setJobsByProject((current) => ({ ...current, [project.id]: { ...created, job_type: "tts_optimize" } }));
       setTimelineNotice("TTS duration optimization is queued. The timeline will be recalculated after the Job completes.");
     } catch (enqueueError) {
-      setTimelineNotice("TTS duration optimization was not queued. Analyze the persisted timeline again before relying on prior results.");
+      setTimelineNotice("TTS duration optimization was not queued. The previous timeline analysis remains available.");
       setEnqueueErrorsByProject((current) => ({
         ...current,
         [project.id]: enqueueError instanceof Error ? enqueueError.message : "Unable to optimize TTS duration.",
@@ -793,7 +806,6 @@ function App() {
   }
 
   async function normalizeTtsAudio(project: Project) {
-    setTimelinePlan(null);
     setTimelineError(null);
     setTimelineNotice(null);
     setOptimizationResult(null);
@@ -816,7 +828,7 @@ function App() {
   }
 
   async function startRender(project: Project) {
-    if (!timelinePlan?.renderable || timelinePlan.blocking_issue_count !== 0 || enqueueingProjects[project.id]) return;
+    if (timelineStale || !timelinePlan?.renderable || timelinePlan.blocking_issue_count !== 0 || enqueueingProjects[project.id]) return;
     setEnqueueingProjects((current) => ({ ...current, [project.id]: true }));
     setEnqueueErrorsByProject((current) => ({ ...current, [project.id]: "" }));
     setRenderError(null);
@@ -938,8 +950,9 @@ function App() {
     const timelineConflictIssues = timelinePlan?.issues.filter((issue) =>
       issue.severity === "blocking" && ["stretch_limit_exceeded", "stretch_interval_overlaps_dialogue"].includes(issue.code)
     ) ?? [];
+    const timelineHasStaleAudio = timelinePlan?.issues.some((issue) => issue.code === "tts_artifact_stale") ?? false;
     const optimizableTimeline = Boolean(
-      timelinePlan && timelinePlan.blocking_issue_count > 0 &&
+      timelinePlan && !timelineStale && timelinePlan.blocking_issue_count > 0 &&
       timelinePlan.issues.filter((issue) => issue.severity === "blocking")
         .every((issue) => ["stretch_limit_exceeded", "stretch_interval_overlaps_dialogue"].includes(issue.code))
     );
@@ -1089,7 +1102,7 @@ function App() {
                   {timelineLoading ? "Analyzing…" : "Analyze timeline"}
                 </button>}
               </div>
-              {job?.job_type === "tts" && (job.status === "queued" || job.status === "running") && <p className="state-message">Full-Project TTS regeneration is {job.status === "queued" ? "queued" : "running"}. Previously published audio remains until the complete replacement set is validated. Analysis is available after the Job ends; TTS-03 optimized rates are not retained by this regeneration.</p>}
+              {job?.job_type === "tts" && (job.status === "queued" || job.status === "running") && <p className="state-message">Incremental TTS generation is {job.status === "queued" ? "queued" : "running"}. Valid audio and optimized rates are reused. Replacements are published only after validation; analyze the timeline after the Job ends.</p>}
               {optimizationJob && (job.status === "queued" || job.status === "running") && <p className="state-message">TTS duration optimization is {job.status === "queued" ? "queued" : "running"}; saved audio remains available until replacements are validated.</p>}
               {normalizationJob && (job.status === "queued" || job.status === "running") && <p className="state-message">TTS audio normalization is {job.status === "queued" ? "queued" : "running"}; the existing Artifact generation remains published until the replacement set is validated.</p>}
               {normalizationJob && normalizationResult?.status === "failed" && timelinePlan && <p className="state-message">This normalization Job failed without publishing Artifacts. The timeline analysis below uses the currently published audio generation.</p>}
@@ -1107,9 +1120,14 @@ function App() {
               </section>}
               {normalizationResult && (normalizationResult.status === "failed" || normalizationResult.status === "interrupted") && normalizationResult.error && <p className="job-error" role="alert">{normalizationResult.error}</p>}
               {timelineError && <p className="inline-error" role="alert">{timelineError}</p>}
+              {timelineHasStaleAudio && <p className="state-message" role="alert">Audio chưa khớp với bản dịch hiện tại. Hãy tạo lại giọng đọc cho các câu đã chỉnh sửa rồi phân tích timeline lần nữa.</p>}
               {optimizationError && <p className="inline-error" role="alert">{optimizationError}</p>}
               {timelineNotice && <p className="state-message" role="status">{timelineNotice}</p>}
-              {!timelinePlan && !timelineLoading && !timelineError && !timelineNotice && <p className="state-message">Analyze the current persisted audio and translations to view timeline readiness.</p>}
+              {timelinePlan && timelineStale && <div className="timeline-blocked" role="status">
+                <strong>Kết quả phân tích cũ — cần phân tích lại.</strong>
+                <p>Các blocker dưới đây thuộc lần phân tích trước; số đo có thể không còn chính xác. Bạn vẫn có thể mở Segment để chỉnh sửa. Hãy tạo lại audio cho các câu đã đổi, sau đó phân tích timeline để cập nhật kết quả.</p>
+              </div>}
+              {!timelinePlan && !timelineLoading && !timelineError && <p className="state-message">No successful timeline analysis is available yet. Analyze the current persisted audio and translations to view readiness.</p>}
               {timelineLoading && <p className="state-message">Verifying saved audio and measuring the original video…</p>}
               {optimizationResult && <div className="optimization-results">
                 {optimizationResult.stale ? <p className="timeline-blocked" role="status">This optimization result is stale because the Project translations or TTS audio changed. It does not describe the current timeline; use Analyze timeline for current persisted data.</p> : <details>
@@ -1145,16 +1163,16 @@ function App() {
                 </details>}
               </div>}
               {timelinePlan && <>
-                <p className={timelinePlan.renderable ? "timeline-clear" : "timeline-blocked"}>
+                {!timelineStale && <p className={timelinePlan.renderable ? "timeline-clear" : "timeline-blocked"}>
                   {timelinePlan.renderable ? "Timeline ready for rendering. No blocking issues remain; no video has been rendered." : `Planning blocked by ${timelinePlan.blocking_issue_count} issue(s).`}
-                </p>
+                </p>}
                 <dl className="timeline-summary">
                   <div><dt>Original video</dt><dd>{timelinePlan.original_video_duration_ms === null ? "Unavailable" : formatTimestamp(timelinePlan.original_video_duration_ms / 1000)}</dd></div>
                   <div><dt>Planned output</dt><dd>{timelinePlan.planned_output_video_duration_ms === null ? "Unavailable" : formatTimestamp(timelinePlan.planned_output_video_duration_ms / 1000)}</dd></div>
                   <div><dt>Additional duration</dt><dd>{formatTimestamp(timelinePlan.total_added_duration_ms / 1000)}</dd></div>
                   <div><dt>Segments to stretch</dt><dd>{timelinePlan.stretch_segment_count} / {timelinePlan.segment_count}</dd></div>
                 </dl>
-                {timelinePlan.renderable && <div className="render-action card">
+                {!timelineStale && timelinePlan.renderable && <div className="render-action card">
                   <p>Chế độ tự động giảm âm nền làm nhỏ toàn bộ âm thanh gốc khi có thoại Việt; không thể tách riêng giọng Trung Quốc hoặc các giọng khác. Audio TTS, tốc độ đọc và timeline không bị thay đổi.</p>
                   <p>Expected output: {timelinePlan.planned_output_video_duration_ms === null ? "Unavailable" : formatTimestamp(timelinePlan.planned_output_video_duration_ms / 1000)} · {timelinePlan.stretch_operations.length} video stretch operation(s)</p>
                   <div className="render-audio-settings">
@@ -1186,7 +1204,7 @@ function App() {
                     {renderJob && (job.status === "queued" || job.status === "running") ? "Rendering dubbed video…" : enqueueingProjects[selectedProject.id] ? "Queuing render…" : "Render dubbed video"}
                   </button>
                 </div>}
-                {!timelinePlan.renderable && <p className="state-message">Rendering is unavailable while the current plan has {timelinePlan.blocking_issue_count} blocking issue(s).</p>}
+                {(timelineStale || !timelinePlan.renderable) && <p className="state-message">{timelineStale ? "Rendering and optimization require a fresh successful analysis; stale results are reference only." : `Rendering is unavailable while the current plan has ${timelinePlan.blocking_issue_count} blocking issue(s).`}</p>}
                 {enqueueErrorsByProject[selectedProject.id] && <p className="inline-error" role="alert">{enqueueErrorsByProject[selectedProject.id]}</p>}
                 {timelineConflictIssues.length > 0 && <div className="timeline-conflict-list">
                   <h4>Resolve timing conflicts</h4>
@@ -1210,8 +1228,9 @@ function App() {
                       <p className="conflict-translation">{segment.translated_text || "No Vietnamese translation is available."}</p>
                       <p className="conflict-reason">{issue.message}</p>
                       <button type="button" className="edit-translation" onClick={() => {
-                        beginTranslationEdit(segment);
-                        locateReadinessSegment(segmentId);
+                        if (beginTranslationEdit(segment) && locateReadinessSegment(segmentId)) {
+                          window.requestAnimationFrame(() => document.getElementById(`translation-${segmentId}`)?.focus());
+                        }
                       }}>Open Segment and edit translation</button>
                     </li>;
                   }))}</ol>

@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import shutil
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import aiohttp
 import edge_tts
-from edge_tts.exceptions import SkewAdjustmentError, WebSocketError
-from sqlalchemy import func, select, update
+from edge_tts.exceptions import NoAudioReceived, SkewAdjustmentError, WebSocketError
+from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -28,18 +26,19 @@ from app.services.audio_normalization import (
     AudioNormalizationError,
     measured_audio_duration_ms as measure_decoded_audio_duration_ms,
     normalize_audio_file,
-    read_normalization_metadata,
     write_normalization_metadata,
 )
 from app.services.uploads import resolve_storage_path
 from app.services.tts_readiness import validate_project_tts_readiness
+from app.services.tts_artifacts import (
+    TTS_MEDIA_TYPE, TTSArtifactError, translation_fingerprint, validate_segment_tts_artifact,
+)
 
 
 logger = logging.getLogger("autodub.tts")
 MAX_ATTEMPTS = 3
 BASE_RETRY_DELAY_SECONDS = 0.5
 SYNTHESIS_TIMEOUT_SECONDS = 90
-TTS_MEDIA_TYPE = "audio/mpeg"
 
 
 class TTSError(ValueError):
@@ -66,16 +65,6 @@ def adaptive_rate_percent(text: str, original_duration_seconds: Decimal | float)
     if wps > Decimal("2.8"):
         return 6
     return 0
-
-
-def translation_fingerprint(text: str, voice: str, rate_percent: int) -> str:
-    material = json.dumps(
-        {"text": text, "voice": voice, "rate_percent": rate_percent, "format": "mp3"},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(material).hexdigest()
 
 
 OPTIMIZATION_RATE_TIERS = (0, 6, 14, 22, 35)
@@ -106,7 +95,15 @@ def _is_transient(error: Exception) -> bool:
         return False
     return isinstance(
         error,
-        (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError, OSError, WebSocketError, SkewAdjustmentError),
+        (
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            TimeoutError,
+            OSError,
+            WebSocketError,
+            SkewAdjustmentError,
+            NoAudioReceived,
+        ),
     )
 
 
@@ -119,6 +116,9 @@ async def synthesize_segment(
     semaphore: asyncio.Semaphore,
     communicate_factory: Callable[..., Any] | None = None,
     retry_sleep: Callable[[float], Any] = asyncio.sleep,
+    segment_id: UUID | None = None,
+    artifact_id: UUID | None = None,
+    attempt_callback: Callable[[int], None] | None = None,
 ) -> int:
     """Synthesize one complete Segment with bounded retries and concurrency."""
     if not text.strip():
@@ -137,6 +137,8 @@ async def synthesize_segment(
                     text, voice, rate=f"+{rate_percent}%", connect_timeout=10,
                     receive_timeout=SYNTHESIS_TIMEOUT_SECONDS,
                 )
+                if attempt_callback is not None:
+                    attempt_callback(attempt + 1)
                 await asyncio.wait_for(communicate.save(str(raw_destination)), timeout=SYNTHESIS_TIMEOUT_SECONDS)
                 original_duration_ms = measured_audio_duration_ms(raw_destination)
                 normalized = normalize_audio_file(raw_destination, destination)
@@ -150,11 +152,31 @@ async def synthesize_segment(
                 write_normalization_metadata(destination, metadata)
                 if normalized.original_duration_ms != original_duration_ms:
                     raise TTSError("Generated Segment audio measurement changed during normalization.")
+                logger.info(
+                    "Edge-TTS synthesis succeeded (segment_id=%s, artifact_id=%s, rate_percent=%d, attempt=%d).",
+                    segment_id,
+                    artifact_id,
+                    rate_percent,
+                    attempt + 1,
+                )
                 return measured_audio_duration_ms(destination)
             except Exception as error:
                 destination.unlink(missing_ok=True)
                 raw_destination.unlink(missing_ok=True)
                 metadata_path.unlink(missing_ok=True)
+                status_code = getattr(error, "status_code", getattr(error, "status", None))
+                if not isinstance(status_code, int):
+                    status_code = None
+                logger.warning(
+                    "Edge-TTS synthesis attempt failed (segment_id=%s, artifact_id=%s, rate_percent=%d, attempt=%d/%d, exception_class=%s, http_status=%s).",
+                    segment_id,
+                    artifact_id,
+                    rate_percent,
+                    attempt + 1,
+                    MAX_ATTEMPTS,
+                    type(error).__name__,
+                    status_code,
+                )
                 if not _is_transient(error) or attempt + 1 >= MAX_ATTEMPTS:
                     if isinstance(error, TTSError):
                         raise
@@ -172,6 +194,30 @@ def _safe_tts_dir(project_id: UUID, job_id: UUID, *, temporary: bool) -> Path:
     return resolve_storage_path(relative)
 
 
+def _segment_snapshot(segments: list[Segment]) -> list[tuple]:
+    return [
+        (item.id, item.project_id, item.position, item.start_seconds, item.end_seconds,
+         item.source_text, item.translated_text, item.revision)
+        for item in segments
+    ]
+
+
+def _artifact_snapshot(artifacts: list[Artifact]) -> dict[UUID, tuple]:
+    return {
+        item.id: (item.project_id, item.segment_id, item.job_id, item.revision, item.media_type,
+                  item.storage_reference, item.duration_ms, item.provenance_fingerprint,
+                  item.voice, item.rate_percent, item.is_current)
+        for item in artifacts
+    }
+
+
+def _artifacts_by_segment(artifacts: list[Artifact]) -> dict[UUID | None, list[Artifact]]:
+    grouped: dict[UUID | None, list[Artifact]] = {}
+    for artifact in artifacts:
+        grouped.setdefault(artifact.segment_id, []).append(artifact)
+    return grouped
+
+
 def generate_project_tts(
     engine: Engine,
     *,
@@ -180,112 +226,153 @@ def generate_project_tts(
     input_revision: int,
     stage_callback: Callable[[str], None],
 ) -> int:
-    """Generate all required audio, then publish artifacts in one DB transaction."""
+    """Reuse strictly valid audio and atomically publish only required replacements."""
+    voice = get_edge_tts_voice()
     with Session(engine) as session:
         project = session.get(Project, project_id)
         job = session.get(Job, job_id)
-        if project is None or job is None or job.status != JobStatus.RUNNING.value:
-            raise TTSError("TTS Job or Project is no longer available.")
-        readiness = validate_project_tts_readiness(
-            session, project_id, ignore_active_job_id=job_id
-        )
+        if (
+            project is None or job is None or job.project_id != project_id
+            or job.operation_type != "tts" or job.status != JobStatus.RUNNING.value
+            or job.input_revision != input_revision or project.current_revision != input_revision
+        ):
+            raise TTSError("TTS Job is not valid for the current Project revision.")
+        readiness = validate_project_tts_readiness(session, project_id, ignore_active_job_id=job_id)
         if not readiness.ready:
             raise TTSError("Project is no longer ready for Vietnamese voice generation.")
-        segments = session.scalars(
-            select(Segment).where(
-                Segment.project_id == project_id,
-                Segment.revision == input_revision,
-            ).order_by(Segment.position, Segment.id)
-        ).all()
-        if not segments or any(not item.translated_text or not item.translated_text.strip() for item in segments):
-            raise TTSError("Every current Segment must have a Vietnamese translation.")
-        snapshots = [
-            (item.id, item.position, item.start_seconds, item.end_seconds, item.translated_text)
-            for item in segments
-        ]
+        segments = session.scalars(select(Segment).where(
+            Segment.project_id == project_id,
+            Segment.revision == input_revision,
+        ).order_by(Segment.position, Segment.id)).all()
+        snapshots = _segment_snapshot(segments)
+        artifacts = session.scalars(select(Artifact).where(
+            Artifact.project_id == project_id,
+            Artifact.media_type == TTS_MEDIA_TYPE,
+            Artifact.is_current.is_(True),
+        )).all()
+        artifact_snapshot = _artifact_snapshot(artifacts)
+        grouped = _artifacts_by_segment(artifacts)
+        if set(grouped) - {segment.id for segment in segments}:
+            raise TTSError("Current TTS audio has an unknown Segment association; regeneration was stopped.")
+        required: list[Segment] = []
+        reused: dict[UUID, UUID] = {}
+        for segment in segments:
+            try:
+                valid = validate_segment_tts_artifact(
+                    session, project, segment, grouped.get(segment.id, []), voice
+                )
+                reused[segment.id] = valid.artifact.id
+            except TTSArtifactError as error:
+                required.append(segment)
+                logger.info("TTS regeneration required (job_id=%s, segment_id=%s, reason=%s).",
+                            job_id, segment.id, error.code)
 
-    voice = get_edge_tts_voice()
     concurrency = get_edge_tts_concurrency()
     temporary_dir = _safe_tts_dir(project_id, job_id, temporary=True)
     final_dir = _safe_tts_dir(project_id, job_id, temporary=False)
-    temporary_dir.mkdir(parents=True, exist_ok=False)
-    generated: list[tuple[UUID, Path, int, int, str]] = []
+    generated: list[tuple[UUID, UUID, int, int, str]] = []
+    temporary_created = final_created = False
+    logger.info("TTS selection (job_id=%s, regenerate=%d, reuse=%d).", job_id, len(required), len(reused))
 
     async def synthesize_all() -> None:
         semaphore = asyncio.Semaphore(concurrency)
 
-        async def synthesize_one(index: int, snapshot: tuple[UUID, int, Decimal, Decimal, str]):
-            segment_id, _position, start, end, text = snapshot
+        async def synthesize_one(segment: Segment):
             stage_callback("generating_tts")
-            duration_seconds = Decimal(end) - Decimal(start)
-            rate = adaptive_rate_percent(text, duration_seconds)
-            fingerprint = translation_fingerprint(text, voice, rate)
-            output = temporary_dir / f"{segment_id}.mp3"
+            text = segment.translated_text or ""
+            rate = adaptive_rate_percent(text, Decimal(segment.end_seconds) - Decimal(segment.start_seconds))
+            artifact_id = uuid4()
             duration_ms = await synthesize_segment(
-                text, output, voice=voice, rate_percent=rate, semaphore=semaphore
+                text, temporary_dir / f"{segment.id}.mp3", voice=voice, rate_percent=rate,
+                semaphore=semaphore, segment_id=segment.id, artifact_id=artifact_id,
             )
-            logger.info("Generated TTS for Segment %s (%d/%d).", segment_id, index, len(snapshots))
-            return segment_id, output, duration_ms, rate, fingerprint
+            return segment.id, artifact_id, duration_ms, rate, translation_fingerprint(text, voice, rate)
 
-        generated.extend(await asyncio.gather(*(
-            synthesize_one(index, snapshot)
-            for index, snapshot in enumerate(snapshots, start=1)
-        )))
+        generated.extend(await asyncio.gather(*(synthesize_one(segment) for segment in required)))
 
     try:
-        asyncio.run(synthesize_all())
+        if required:
+            temporary_dir.mkdir(parents=True, exist_ok=False)
+            temporary_created = True
+            asyncio.run(synthesize_all())
         stage_callback("validating_tts")
-        final_dir.parent.mkdir(parents=True, exist_ok=True)
-        if final_dir.exists():
-            raise TTSError("TTS output directory already exists for this Job.")
-        shutil.move(str(temporary_dir), str(final_dir))
-        relative_final = PurePosixPath("projects") / str(project_id) / "jobs" / str(job_id) / "tts"
+        if required:
+            final_dir.parent.mkdir(parents=True, exist_ok=True)
+            if final_dir.exists():
+                raise TTSError("TTS output directory already exists for this Job.")
+            temporary_dir.rename(final_dir)
+            temporary_created = False
+            final_created = True
         with Session(engine) as session, session.begin():
             project = session.scalar(select(Project).where(Project.id == project_id).with_for_update())
             job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
-            current_segments = session.scalars(
-                select(Segment).where(Segment.project_id == project_id)
-                .order_by(Segment.position, Segment.id).with_for_update()
-            ).all()
-            current_snapshot = [
-                (item.id, item.position, item.start_seconds, item.end_seconds, item.translated_text)
-                for item in current_segments
-            ]
+            current_segments = session.scalars(select(Segment).where(
+                Segment.project_id == project_id
+            ).order_by(Segment.position, Segment.id).with_for_update()).all()
+            current_artifacts = session.scalars(select(Artifact).where(
+                Artifact.project_id == project_id, Artifact.media_type == TTS_MEDIA_TYPE,
+                Artifact.is_current.is_(True),
+            ).with_for_update()).all()
             if (
-                project is None or job is None or job.status != JobStatus.RUNNING.value
-                or project.current_revision != input_revision or current_snapshot != snapshots
+                project is None or job is None or job.project_id != project_id
+                or job.operation_type != "tts" or job.status != JobStatus.RUNNING.value
+                or job.input_revision != input_revision or project.current_revision != input_revision
+                or _segment_snapshot(current_segments) != snapshots
+                or _artifact_snapshot(current_artifacts) != artifact_snapshot
+                or get_edge_tts_voice() != voice
             ):
-                raise TTSError("Project translations changed while TTS was running; generated audio was discarded.")
-            session.execute(
-                update(Artifact).where(
-                    Artifact.project_id == project_id,
-                    Artifact.media_type == TTS_MEDIA_TYPE,
-                    Artifact.is_current.is_(True),
-                ).values(is_current=False)
-            )
-            for segment_id, _path, duration_ms, rate, fingerprint in generated:
-                storage_reference = (
-                    relative_final / f"{segment_id}.mp3"
-                ).as_posix()
+                raise TTSError("Project translations or TTS inputs changed; generated audio was discarded.")
+            if not validate_project_tts_readiness(session, project_id, ignore_active_job_id=job_id).ready:
+                raise TTSError("Project is no longer ready for TTS publication.")
+            # Lock producer rows and revalidate reuse in this fresh transaction.
+            producer_jobs = session.scalars(select(Job).where(Job.id.in_(
+                [item.job_id for item in current_artifacts if item.id in reused.values()]
+            )).with_for_update()).all()
+            current_grouped = _artifacts_by_segment(current_artifacts)
+            for segment in current_segments:
+                if segment.id in reused:
+                    try:
+                        valid = validate_segment_tts_artifact(
+                            session, project, segment, current_grouped.get(segment.id, []), voice
+                        )
+                        if valid.artifact.id != reused[segment.id]:
+                            raise ValueError
+                    except ValueError:
+                        raise TTSError("Reusable TTS audio changed or became invalid; generated audio was discarded.") from None
+            regenerated_ids = {segment.id for segment in required}
+            for artifact in current_artifacts:
+                if artifact.segment_id in regenerated_ids:
+                    artifact.is_current = False
+            for segment_id, artifact_id, duration_ms, rate, fingerprint in generated:
                 session.add(Artifact(
-                    project_id=project_id,
-                    job_id=job_id,
-                    segment_id=segment_id,
-                    revision=input_revision,
-                    media_type=TTS_MEDIA_TYPE,
-                    storage_reference=storage_reference,
-                    duration_ms=duration_ms,
-                    provenance_fingerprint=fingerprint,
-                    voice=voice,
-                    rate_percent=rate,
-                    is_current=True,
+                    id=artifact_id, project_id=project_id, job_id=job_id, segment_id=segment_id,
+                    revision=input_revision, media_type=TTS_MEDIA_TYPE,
+                    storage_reference=f"projects/{project_id}/jobs/{job_id}/tts/{segment_id}.mp3",
+                    duration_ms=duration_ms, provenance_fingerprint=fingerprint,
+                    voice=voice, rate_percent=rate, is_current=True,
                 ))
             job.status = JobStatus.SUCCEEDED.value
             job.stage = "tts_ready"
             job.safe_error = None
             job.completed_at = session.scalar(select(func.now()))
+            session.flush()
+            published = session.scalars(select(Artifact).where(
+                Artifact.project_id == project_id, Artifact.media_type == TTS_MEDIA_TYPE,
+                Artifact.is_current.is_(True),
+            )).all()
+            published_grouped = _artifacts_by_segment(published)
+            for segment in current_segments:
+                try:
+                    validate_segment_tts_artifact(
+                        session, project, segment, published_grouped.get(segment.id, []), voice
+                    )
+                except TTSArtifactError:
+                    raise TTSError("TTS output could not be validated; no replacement audio was published.") from None
     except Exception:
-        shutil.rmtree(temporary_dir, ignore_errors=True)
-        shutil.rmtree(final_dir, ignore_errors=True)
+        if temporary_created:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+        if final_created:
+            shutil.rmtree(final_dir, ignore_errors=True)
         raise
+    logger.info("TTS completed (job_id=%s, generated=%d, reused=%d).", job_id, len(generated), len(reused))
     return len(generated)
