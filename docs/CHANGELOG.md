@@ -537,3 +537,27 @@
 - **Limitations:** Chưa xác minh trên Project thật hoặc PostgreSQL/Supabase; migration chưa áp dụng. AV-SYNC-02 và FLOW-01 vẫn Partial.
 - **Next step:** Áp dụng `20261026_av_sync_02_joint_plan.sql` qua quy trình migration PostgreSQL/Supabase đã phê duyệt và xác minh schema trước khi triển khai luồng joint trên database. FLOW-01 tiếp tục là công việc riêng và chưa bắt đầu lại.
 - **Còn lại:** Không còn tiêu chí offline AV-SYNC-03 chưa đạt.
+
+## 2026-11-03 — AV-SYNC-02: Đồng bộ migration Supabase và chuẩn bị schema joint plan
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Đối chiếu history remote với local, khôi phục migration metadata còn thiếu từ SQL backend byte-identical sau khi xác nhận hiệu ứng schema live, và tạo migration Supabase AV-SYNC-02 bằng Supabase CLI. Migration mới chỉ được chuẩn bị; chưa áp dụng DDL, sửa dữ liệu, RLS hay grants.
+- **Tệp:** `supabase/migrations/20261024183749_add_tts_segment_artifact_metadata.sql`, `supabase/migrations/20261103160642_av_sync_02_joint_plan.sql`, `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Supabase MCP xác nhận remote có đúng ba migration đã áp dụng: `20261024183749`, `20261024193822`, `20261025073602`; hai migration đã có trong repo cũng khớp version remote. Schema xác nhận chưa có `autodub_jobs.result_json`, rate constraint hiện chỉ nhận `{0, 6, 12, 14, 20, 22, 35}`, và 0/1.189 Artifact rows vi phạm allow-list đích. Có 7 Project, 56 Job, 583 Segment, 1.189 Artifact; không ghi dữ liệu. SQL migration AV-SYNC-02 trùng hash với file backend tương ứng. Supabase CLI v3.0.0: `migration new` thành công; `migration fetch`, `migration list --remote` và `db push --dry-run --remote` đều dừng với `DbConfigIpv6Error` do mạng hiện tại không hỗ trợ IPv6. `git diff --check` được chạy sau khi chuẩn bị. Không chạy unit test vì không đổi application code; chưa xác thực cú pháp DDL bằng PostgreSQL.
+- **Còn lại:** AV-SYNC-02 chưa hoàn tất; cần xác nhận trước khi áp dụng migration và kiểm tra schema trên PostgreSQL. File migration lịch sử được dựng lại từ counterpart đã đối chiếu, không tải được bản gốc qua CLI nên chưa chứng minh byte-for-byte với SQL ban đầu. Không xác nhận dry-run pending set. RLS đang tắt trên cả bốn bảng AutoDub; `anon` và `authenticated` có SELECT/INSERT/UPDATE/DELETE grants, vì vậy Data API có thể truy cập dữ liệu nếu schema `public` được expose. Chưa thay đổi quyền; cần xử lý như nhiệm vụ bảo mật riêng.
+
+## 2026-11-04 — AV-SYNC-02: Xác minh migration Supabase và hoàn tất database gate
+
+- **Trạng thái:** Hoàn thành
+- **Thay đổi:** Đóng gate triển khai AV-SYNC-02 sau khi nhà phát triển áp dụng migration qua Supabase SQL Editor và đồng bộ migration history. Lần xác minh này chỉ đọc; không chạy lại DDL, migration repair, `db push` hoặc reset.
+- **Tệp:** `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Supabase MCP xác nhận remote history có đủ bốn migration local, gồm `20261103160642`; `autodub_jobs.result_json` có kiểu `json`; constraint rate cho phép `{0, 6, 12, 14, 20, 22, 25, 35}`. Cả 1.189 Artifact rows còn tồn tại và không có rate ngoài allow-list. 185 backend unit test đạt; `compileall`, `pip check` và `git diff --check` đạt. Không thay đổi dữ liệu ứng dụng.
+- **Còn lại:** AV-SYNC-02 hoàn tất. RLS vẫn tắt và các grant Data API đã ghi nhận trước đó cần được xử lý riêng trước khi expose bảng công khai; không thuộc phạm vi này.
+
+## 2026-11-04 — FLOW-01: Đối chiếu trạng thái tích hợp trước nghiệm thu cuối
+
+- **Trạng thái:** Một phần
+- **Thay đổi:** Đối chiếu read-only Project kiểm chứng hiện có với pipeline và ghi nhận render Job cùng MP4 Artifact đã được persist. Không gọi provider, tạo Job, đổi dữ liệu hoặc tạo lại media.
+- **Tệp:** `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/AI_USAGE.md`
+- **Kiểm chứng:** Project `FLOW-01 verification 2026-10-25` có 11 Segment hợp lệ, 11 bản dịch không rỗng và Job thành công đến `render_complete`; tồn tại 11 audio Artifact cùng một `video/mp4` Artifact có metadata duration 22.970 ms. Migration AV-SYNC-02 hiện được xác minh trên Supabase. Không có Job `av_sync_optimize` cho Project này; hai Job optimization cũ thất bại, trong đó có `NoAudioReceived`, nhưng nguyên nhân upstream chưa xác định. Lượt này không kiểm tra FFprobe trực tiếp, HTTP preview/Range/download hoặc browser/listening acceptance. 185 backend unit test, `compileall`, `pip check` và `git diff --check` đạt.
+- **Còn lại:** FLOW-01 vẫn một phần. Bước kế tiếp là browser acceptance trên Artifact render đã persist, gồm preview, seek/playback và download qua API; không cần lặp AI/TTS. Không suy ra blocker timeline hiện tại từ dữ liệu lịch sử và không xem render này là bằng chứng thực thi joint optimizer `av_sync_optimize`.

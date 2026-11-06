@@ -1,112 +1,117 @@
-# AutoDub Tasks
+# AutoDub — TASKS
 
-## Status convention
+> Checklist tiến độ. `[x]` = đã hoàn thành theo bằng chứng trước đây; `[ ]` = chưa hoàn tất/chưa nghiệm thu (kể cả đang làm). Chi tiết kiểm chứng và lỗi ghi ở `docs/CHANGELOG.md`, không ghi dài trong file này.
+>
+> **Ưu tiên hiện tại:** Hoàn thiện chất lượng **nhận diện lời → dịch → tạo giọng → đồng bộ → render video**. Chỉ hoàn thiện UI sau khi pipeline đạt yêu cầu.
 
-- `[ ]` planned or not yet verified; `[x]` complete with evidence.
-- `Current Task` is the only authoritative pointer to active work.
-- A phase may span multiple weeks. See `PLAN.md` for phase exit gates.
-- Task criteria describe the minimum evidence; details belong in code/tests or the routed design document.
+## Task đang thực hiện
 
-## Current Task
+- [ ] **PIPE-00 — Chốt bộ video mẫu, tiêu chí đánh giá và trạng thái pipeline hiện tại.**
 
-- **Phase:** 7 — Edge-TTS and FFmpeg output
-- **Task:** `AV-SYNC-03`
-- **Next after verified completion:** `AV-SYNC-02` PostgreSQL migration validation is a prerequisite before deploying this path to PostgreSQL; `FLOW-01` remains separately partial and is not started automatically.
-- **Scope:** Execute supported `av-sync-v1` plans in FFmpeg, validate real frame/sample coverage, preserve exact selected TTS Artifacts and atomic render publication. Do not run the real Project pipeline or apply database migrations.
+## Giai đoạn A — Hoàn thiện pipeline (ưu tiên cao nhất)
 
-## Legacy parity and translation priority
+### A1. Nhận diện lời (ASR)
 
-AutoDub is a web evolution of the tested desktop Video Dubbing Automation Tool. Relevant legacy behavior must be reviewed before implementing or replacing pipeline algorithms.
+- [ ] `PIPE-01` — Kiểm tra độ chính xác lời và mốc thời gian; xử lý câu bị thiếu, lặp, im lặng và phân đoạn sai.
+- [ ] `PIPE-01-QA` — Kiểm thử ASR với các video mẫu thực tế, lưu lỗi và kết quả đối chiếu.
 
-Priority after the source audit: `LEGACY-01` (complete), `TRANS-03`, `GEMINI-FIX`, `TRANS-04`, translation/timeline quality benchmarking, then `TIMELINE-02` only if evidence demonstrates a remaining need. Existing task statuses and evidence remain authoritative.
+### A2. Dịch lời thoại
 
-## Phase 1 — Documents and environment
+- [ ] `PIPE-02` — Tối ưu dịch theo ngữ cảnh, tự nhiên khi đọc thành tiếng và đủ ý; không làm sai ID/timestamp.
+- [ ] `TRANS-04` — So sánh bản dịch, sửa và xác nhận bản dịch an toàn theo revision.
+- [ ] `QA-05` — Đối chiếu chất lượng dịch và độ dài câu bằng bộ mẫu có kết quả mong đợi.
 
-- [x] `INIT-01` — Create project overview, plan, rules, backlog, and planned architecture. Evidence: files, internal links, and implementation status checked.
-- [x] `INIT-02` — Add placeholder repository structure and `.gitignore`. Evidence: expected paths exist; no runtime data or application implementation claimed.
-- [x] `INIT-03` — Confirm the MVP scope, flow, architecture, exclusions, and phase order. Evidence: authoritative documents are consistent.
-- [x] `INIT-04` — Review the development/demo machine and worker environment. Evidence: verified facts and unverified GPU/Whisper status recorded in `docs/ENVIRONMENT.md`.
-- [x] `ENV-00` — Ensure sufficient project-drive space. Evidence: project moved to drive D with about 27 GB free; continue monitoring the 10 GB reserve target.
-- [ ] `GIT-01` — Initialize/configure the repository remote and make the first real push. Complete only with the correct remote and an actual GitHub commit; run only when requested.
+### A3. Chuyển văn bản thành giọng nói (TTS)
 
-## Phase 2 — FastAPI and React foundations
+- [ ] `PIPE-03` — Kiểm thử giọng đọc, phát âm, tốc độ, độ dài audio và các trường hợp TTS lỗi.
+- [ ] `PIPE-03-QA` — Đảm bảo không mất chữ, cắt lời hoặc tái sử dụng audio sai revision.
 
-- [x] `ENV-01` — Bootstrap minimal FastAPI. Complete when a local health endpoint works and a test or reproducible check passes.
-- [x] `ENV-02` — Bootstrap React, TypeScript, and Vite. Complete when the welcome page runs and the production build passes.
-- [x] `ENV-03` — Pin dependencies and add secret-free example configuration. Complete when tested setup instructions are documented.
+### A4. Đồng bộ tiếng và hình (AV-Sync)
 
-## Phase 3 — Supabase PostgreSQL, projects, and upload
+- [ ] `PIPE-04` — Hoàn thiện tối ưu đồng thời độ dài TTS và tốc độ video, giữ đủ nội dung lời.
+- [ ] `PIPE-04-QA` — Kiểm tra câu chồng lấn, khoảng im lặng, độ lệch tiếng–hình và giới hạn kéo giãn video.
+- [ ] `TIMELINE-02` — Chỉ nâng cấp thuật toán timeline nếu kiểm thử chứng minh còn hạn chế.
 
-- [x] `DATA-01` — Implement `Project`, `Job`, `Segment`, and `Artifact` metadata persistence in Supabase-hosted PostgreSQL through FastAPI, using SQLAlchemy and a PostgreSQL driver. Configure the connection only through uncommitted `DATABASE_URL`; use UUID identifiers and timezone-aware timestamps where appropriate. Verified table initialization, connected-record persistence after a new engine/session, foreign-key relationships, constraints, and cleanup through the application connection.
-- [x] `UPLOAD-01` — Store uploaded video under server-generated IDs. Verified real multipart uploads persist Project metadata in Supabase and use only deterministic relative paths under local server-managed storage; hostile filenames cannot control destination paths.
-- [x] `UPLOAD-02` — Validate actual format, configured size, and duration. Verify corrupt, unsupported, and over-limit input is rejected clearly.
-- [x] `UI-01` — Connect project list/create/upload UI to the API. Verify projects persist across browser refresh. Evidence: manual browser verification confirmed native MP4 selection, successful React upload, safe form reset, immediate project-list refresh, and persistence after browser refresh.
+### A5. Render video đầu ra
 
-## Phase 4 — Jobs and Python worker
+- [ ] `PIPE-05` — Hoàn thiện render MP4, phối âm nền/ducking và xuất phụ đề SRT khi có yêu cầu.
+- [ ] `PIPE-05-QA` — Kiểm tra thời lượng, âm lượng, mất tiếng, tiếng rè, đồng bộ, playback/seek và tải file.
 
-- [x] `JOB-01` — Add a separate sequential Python worker. Evidence: SQLAlchemy connected to the active Supabase project; FastAPI returned a real Job ID and `queued` within 2.5 seconds; a separate worker process claimed that Job as `running`/`claimed`, while a second persisted Job stayed `queued`; new SQLAlchemy engine/session and Supabase MCP confirmed both records; verification Project/Jobs were removed; compileall, pip check, and repository checks passed. Claimed Jobs remain `running` until a real pipeline is implemented.
-- [x] `JOB-02` — Persist job state, stage, errors, and interrupted-job policy. Evidence: on Supabase, API GET returned persisted queue/claim/interruption/failure fields; killing a claimed worker then starting a fresh process changed the abandoned Job to `interrupted` with stage, safe reason and completion time; retry created a distinct queued Job and left the original unchanged; retries of queued and running Jobs returned 409; bounded failure transition persisted a path-redacted error; another Job stayed queued until only one running slot was free; fresh SQLAlchemy sessions confirmed timezone-aware lifecycle timestamps; verification Project/Jobs were removed; compileall, pip check and repository checks passed. Jobs are not completed without a real handler.
-- [x] `UI-02` — Display backend job state/stage. Evidence: on Supabase, the UI enqueued a real Job while the worker was stopped and displayed `queued`/`queued`; browser refresh recovered the same persisted Job; a separate Python worker changed it to `running`/`claimed`; worker restart changed it to `interrupted` with the persisted safe reason, which the UI displayed. Developer manually confirmed this browser flow and the absence of fabricated percentage progress. Verification Project/Jobs were removed; frontend build, backend compileall/pip check, `git diff --check`, and secret/ignore checks passed. No direct frontend Supabase access was found.
+### A6. Kiểm thử quy trình hoàn chỉnh
 
-## Phase 5 — Whisper transcript
+- [ ] `PIPE-06` — Chạy một lượt **ASR → Dịch → TTS → AV-Sync → Render** với video được phép sử dụng.
+- [ ] `FLOW-01` — Nghiệm thu đầu ra thực tế sau khi các bước trên đạt chất lượng; không tính một render thô là nghiệm thu cuối.
+- [ ] `QA-01` — Bổ sung unit/integration test cho dữ liệu, trạng thái Job và lỗi provider.
+- [ ] `QA-02` — Kiểm thử video lỗi, không có lời, quota hết, TTS/FFmpeg thất bại.
+- [ ] `QA-03` — Đo thời gian xử lý và tài nguyên trên máy chạy thực tế.
+- [ ] `QA-04` — Kiểm tra bảo vệ secret, file tạm và phạm vi dọn dẹp.
 
-- [x] `ASR-01` — Transcribe a short permitted sample with timestamps. Evidence: faster-whisper `small` ran through the separate worker against real uploaded speech and no-speech MP4s; timestamped Segments persisted to Supabase through SQLAlchemy and were confirmed from a fresh session. The speech transcript remained a single row after a safe rerun; no-speech persisted zero rows. CUDA inference was attempted but failed because CTranslate2 could not load `cublas64_12.dll`; real CPU `int8` inference succeeded. Combined Jobs remain `running` after ASR because translation is not implemented.
+## Giai đoạn B — UI/UX và bàn giao (chỉ sau PIPE-06)
 
-## Phase 6 — Gemini and translation review
+- [ ] `UI-03` — Hoàn thiện giao diện workspace dịch/lồng tiếng và responsive.
+- [ ] `TIMELINE-UX-01` — Hiển thị timeline cũ khi kết quả hiện tại hết hiệu lực; nghiệm thu trên trình duyệt.
+- [ ] `DOC-01` — Cập nhật hướng dẫn, ảnh minh họa, giới hạn và bằng chứng demo.
+- [ ] `DEMO-01` — Chuẩn bị và chạy lại kịch bản trình diễn hoàn chỉnh.
+- [ ] `GIT-01` — Đối chiếu yêu cầu remote/commit/push; chỉ thực hiện khi được yêu cầu.
 
-- [x] `LEGACY-01` — Audit the original desktop `translator.py`, `transcriber.py`, `tts_engine.py`, and `video_editor.py` against the current services. Evidence: all four source modules were located in the neighboring `D:\video-dubbing-automation\modules` reference directory and compared to current code; `docs/LEGACY_PARITY_AUDIT.md` records source references, parity classifications, protections, unsafe behaviors, and exact TRANS-03 requirements. This is a static source audit, not runtime parity or translation-quality verification.
-- [x] `TRANS-03` — Implement Bulk-First contextual translation using legacy behavior selectively while preserving TRANS-02 retries, strict complete Segment-ID validation, immutable source data, and atomic persistence. Evidence: deterministic mocked-provider tests verify a short transcript uses one request, a 267-Segment transcript uses one request under explicit configured input/output budgets, and larger/over-budget transcripts form ordered contextual batches without duplicate persistence. Request payloads include UUID, order, exact source timestamps/duration, and read-only neighboring context; only target IDs are returned and transactionally persisted. Strict malformed/partial rejection, edited-translation protection, later-batch rollback, quota no-retry, transient/malformed one-retry, SDK retry disablement, output cap, and 120-second timeout are covered. 16 focused translation tests passed; compileall, pip check, and `git diff --check` passed. No real Gemini request, Project data change, or translation-quality claim was made.
-- [x] `GEMINI-FIX` — Repair Gemini model discovery, safe provider error reporting, model-catalog checks, and translation-only retry over a valid persisted transcript. Evidence: offline tests cover root `.env` resolution and process overrides, model discovery filtering, structured status/reason/message handling, transcript-only queue/worker behavior, and the preserved TRANS-03 retry/atomicity suite. After the first authorized acceptance attempt exposed an already-running stale worker that rejected `translate_existing`, that worker was stopped and the current `backend/.venv` worker was started from this repository. One further authorized retry used `gemini-3.5-flash-lite` and completed Job `856d5093-88bc-4050-bbbb-37588bba1017` at `translation_ready`; worker logs confirm one full-transcript request and one provider attempt. A fresh SQLAlchemy session confirmed exactly 11 non-empty Vietnamese translations, original Segment IDs/order/timestamps/source text/revisions unchanged, and no changes to other Projects' Segment data or Job counts. The prior failed Job remained terminal; no Whisper ran. No model fallback or schema change was used.
-- [ ] `TRANS-04` — Add safe translation comparison/revision workflow after TRANS-03; preserve user-confirmed revision and media invalidation guarantees.
-- [ ] `QA-05` — Benchmark translation continuity/quality and timeline behavior against reviewed examples; record reproducible method and actual evidence before changing thresholds or defaults.
-- [ ] `TIMELINE-02` — Revisit only if benchmark or runtime evidence shows a remaining timeline limitation after the current planner and conflict-resolution flow.
+## Các task đã hoàn thành trước đây (rút gọn)
 
-- [x] `TRANS-01` — Translate each segment to Vietnamese with Gemini while preserving segment ID and source text. Evidence: the real FastAPI/worker flow sent four ASR Segments in one structured Gemini request; every Vietnamese result persisted to Supabase, and a pre-translation snapshot matched afterward for Segment IDs, source text, timestamps, and order. FastAPI returned `succeeded`/`translation_ready`; fresh SQLAlchemy and independent Supabase MCP queries confirmed persistence. No-speech completed `succeeded`/`no_speech` with zero Segments and no Gemini call. Nine unit tests reject missing, duplicate, unknown, malformed, and empty results, confirm an invalid later batch leaves all Segment data unchanged, and protect existing translations. JOB-02 failure and interruption transitions were also verified; task verification data was removed.
-- [x] `TRANS-02` — Add classified translation/quota failures and bounded retry. Mark simulated-provider tests explicitly as mocks. Evidence: deterministic mock-provider tests confirm HTTP 429/quota and authentication/configuration errors fail without retry; transient network errors and malformed structured results retry the same batch at most once; repeated transient and malformed responses fail without changing persisted Segment data or falling back to source text. Backoff is bounded to 0.5 seconds and tests replace it with a mock. `compileall`, `pip check`, all 14 unit tests, `git diff --check`, and secret/runtime/ignore checks passed. No real Gemini request or schema change was used.
-- [x] `EDIT-01` — Show video and source/translated segment table. Verify rows match stable segment IDs. Evidence: developer manually confirmed the original video plays, Chinese source and Vietnamese translation display, timestamp selection seeks accurately, active Segment highlighting follows playback, timestamps align, and a browser refresh preserves transcript and translation data.
-- [x] `EDIT-02` — Edit, persist, and confirm a translation revision. Verify content survives refresh. Evidence: on a real Project, the user manually confirmed editing/saving Vietnamese translations, persistence after F5, Cancel discarding unsaved edits, rejection of empty/whitespace-only translations, and continued video playback, click-to-seek, timestamp display, and automatic Segment highlighting. Backend API validation and persistence are covered by 22 passing unit tests; frontend production build, compileall, pip check, and diff checks passed. The backend-disconnection/save-failure scenario was not manually tested.
-- [x] `EDIT-03` — Validate translation before TTS. Evidence: on the real `demo2` Project, the user verified readiness succeeds with 11 Segments, 0 blocking errors, and 0 warnings; saving a Vietnamese translation invalidates the previous result and revalidation returns updated results; video preview and transcript functionality remain operational. 33 backend unit tests, frontend build, compileall, and pip check passed in the prior automated verification. Error/warning scenarios and issue navigation were covered by automated tests but were not manually checked in the browser.
+### Khởi tạo, backend và dữ liệu
 
-## Phase 7 — Edge-TTS and FFmpeg output
+- [x] `INIT-01` — Tài liệu khởi tạo.
+- [x] `INIT-02` — Cấu trúc repository.
+- [x] `INIT-03` — Chốt MVP và kiến trúc.
+- [x] `INIT-04` — Khảo sát môi trường.
+- [x] `ENV-00` — Dung lượng ổ dự án.
+- [x] `ENV-01` — FastAPI cơ bản.
+- [x] `ENV-02` — React/TypeScript/Vite cơ bản.
+- [x] `ENV-03` — Dependencies và config mẫu.
+- [x] `DATA-01` — Supabase metadata.
+- [x] `UPLOAD-01` — Lưu video và Project.
+- [x] `UPLOAD-02` — Kiểm tra đầu vào.
+- [x] `UI-01` — Giao diện upload/danh sách Project.
+- [x] `JOB-01` — Worker xử lý tuần tự.
+- [x] `JOB-02` — Job state/recovery.
+- [x] `UI-02` — Hiển thị trạng thái Job.
 
-- [x] `TTS-01` — Select a verified Vietnamese voice and generate valid per-segment audio without content loss. Evidence: on the real `demo2` Project, the user confirmed the TTS Job reached `succeeded`/`tts_ready`, readiness reported 11 Segments with 0 errors and 0 warnings, per-Segment Vietnamese audio played without truncation, adaptive `+20%` rate and measured durations displayed, results persisted after F5, and source timestamps/translations remained unchanged. Segment-level speech generation is complete; synchronization and video time-stretching remain future work.
-- [x] `TTS-INCREMENTAL-01` — Safely regenerate only missing/invalid current Segment audio using the shared strict Artifact validator for reuse, timeline and playback. Evidence: isolated 272-Segment fixture with one edit generates one audio file and preserves the exact 271 reused Artifact IDs/files/metadata/producer references/rates; three edits generate three; no edits generate zero and create no output directory. Optimized +35% audio is preserved. Tests reject stale/missing/ambiguous/invalid-producer/revision input and verify reuse revalidation, concurrent edits, conflicting Jobs and database rollback leave no partial publication. Mixed successful producer Jobs remain timeline-valid. Passed 86 targeted TTS/timeline tests, 10 Project API tests, 21 render regression tests, frontend build/typecheck, compile checks and `git diff --check`. No schema/dependency change, live provider call, real Job or Project mutation. Real browser behavior and latency were not measured; FLOW-01 remains unchanged.
-- [x] `TTS-02` — Analyze measured TTS durations and plan a deterministic output timeline with dynamic video stretch operations capped at 1.4×. Evidence: on the real `demo2` Project, the user confirmed the UI reports 21,339 ms source duration, 25,211 ms planned duration, 3,872 ms added duration, and 9 of 11 Segments requiring stretch; it displays 8 blocking timing conflicts and their Segment navigation, with consistent results after refresh. These are valid analysis findings; the plan is not renderable until conflicts are resolved. Source timestamps remain unchanged. Executing dynamic stretch, mixing, subtitle synchronization, and final rendering remain future work.
-- [x] `TTS-03` — Optimize measured Vietnamese TTS duration for planner-blocking Segments using bounded Edge-TTS rates up to +35%, preserve valid audio atomically, and report conflicts that remain. Evidence: on `demo2`, the user confirmed real Edge-TTS optimization improved 7 Segment audio files and resolved 2 of 8 blocking conflicts. The plan changed from 25,211 ms (+3,872 ms) to 25,011 ms (+3,672 ms); 6 conflicts remain with excess durations of 64, 536, 216, 232, 232, and 920 ms, and the Project correctly remains not renderable. The user listened to and accepted optimized voices, confirmed results/audio metadata/Job state persist after refresh, and verified translations, source timestamps, video preview, seeking, and editing remain intact. Timeline conflict resolution and video rendering remain future work.
-- [x] `TTS-04` — Normalize actual TTS media by conservatively trimming excessive trailing silence, preserving originals and publishing measured, provenance-checked Artifacts atomically; provide a tracked Job to normalize existing audio without Edge-TTS regeneration. Evidence: on `demo2`, the user confirmed the normalization Job reached `tts_normalization_complete`, processed 11 files, shortened 0 further files, and recovered 0 ms because the current media was already normalized. Repeated normalization preserved durations; Segment 10 remains 1,045 ms, reduced from 1,872 ms. Timeline analysis reports 2 blocking issues (Segment 3: 246 ms; Segment 10: 93 ms) and 23,730 ms planned output; the Project is not renderable. The user accepted the result. The Artifact-ID snapshot ordering fix is covered by regression tests, and the previous failed normalization Job published no Artifacts. Timeline conflict resolution and rendering remain future work.
-- [ ] `AV-SYNC-02` — Add the versioned balanced joint TTS/video optimization and safe queued API/worker path. **Partial.** Implements deterministic measured candidate planning, up to two alternative rates per affected Segment from `{0, 25, 35}`, a 32-candidate Job cap/96-request upper bound, sequential synthesis, staged selected Artifact publication in one transaction, strict revision/provenance rechecks, microsecond slack, global interval mapping and overlap blockers. AV-SYNC-03 now enables renderability only after executable renderer validation. Remaining: apply and verify `backend/migrations/20261026_av_sync_02_joint_plan.sql` through the approved PostgreSQL deployment process; this task did not apply it or test Supabase. No provider calls or real Project mutation.
-- [x] `AV-SYNC-03` — Execute supported `av-sync-v1` plans in FFmpeg and verify decoded frame/sample synchronization. Evidence: selected Artifact IDs/rates and planner video speeds are revalidated against the current Project, revision, Segment set, source hash, and current Artifact provenance; the complete source-frame partition is retained exactly once. Offline synthetic FFmpeg tests executed speeds 0.7×, 0.5× and 1.0×, checked transformed timestamp placement and background `atempo`, frame/sample coverage, strict nonnegative slack, stale Artifact/version rejection and atomic render publication. The existing legacy timeline path and failed-render preservation remain covered. 59 focused rendering/timeline/optimization/audio-mixing tests passed, plus Python compile checks, `pip check`, and `git diff --check`. No real Project, Supabase migration, or provider was used; PostgreSQL deployment validation remains outstanding under AV-SYNC-02.
-- [x] `TIMELINE-01` — Guide users through resolving TTS timing conflicts by editing persisted Vietnamese translations, regenerating full-Project TTS safely, and recalculating the authoritative timeline plan. Evidence: on `demo2`, the user confirmed the current authoritative planner reports 0 blocking conflicts and the Project ready for rendering; the resulting timeline was accepted with the RENDER-01 output.
-- [ ] `TIMELINE-UX-01` — Preserve the last successful timeline plan as a stale, navigable reference after translation or published-audio changes; retain it during failed/running reanalysis and replace only on a valid success. Blocker navigation uses stable Segment IDs, scrolls/focuses the transcript editor, and seeks without autoplay. Stale plans do not enable optimization or rendering, with backend validation unchanged. Offline verification passed 12 timeline, 10 Project API, and 21 render tests plus frontend production build/typecheck and `git diff --check`. Pending browser acceptance of edit, stale-result retention, blocker navigation, and successful/failed reanalysis. The in-memory plan does not survive Project navigation or browser refresh.
-- [x] `RENDER-01` — Render the authoritative TTS timeline to a dubbed H.264/AAC MP4 with synchronized original audio where present, Vietnamese TTS placement, verified output, atomic provenance-checked Artifact publication, and Project Viewer preview/download. Evidence: user-confirmed browser acceptance on `demo2`; Job completed at `render_complete`, MP4 preview and download are available, planned and verified durations are both 23,681 ms, with 11 TTS Segments, 7 stretch operations, and 0 blocking timeline conflicts.
-- [x] `AUDIO-01` — Mix Vietnamese TTS with the original soundtrack using fixed or timeline-aware ducking, bounded gains, smooth envelope transitions, clipping protection, and render provenance. Evidence: the user confirmed real browser and listening acceptance on `demo2` with Auto Ducking, background gain 0.35, ducked gain 0.08, Vietnamese TTS gain 1.0, 80 ms attack, 250 ms release and 350 ms short-gap bridging; the resulting mix was satisfactory. Previous verification reported 115 backend unit tests, frontend production build, `compileall`, `pip check`, `git diff --check` and the Supabase settings migration passed.
-- [x] `RESULT-01` — Preview/download artifacts for the correct Project and current confirmed revision. Evidence: existing metadata, preview, and download routes share one current-render provenance check. Added explicit checks that the Artifact belongs to the requested Project and current Project revision, and that its render Job belongs to that Project, targets the current revision, and is `succeeded` at `render_complete`. Focused integration tests confirm all three result routes return 404 for mismatched Project/revision, failed Job, or incorrect stage; existing tests verify valid preview, range requests, download, persistence, and stale-translation rejection. The `test_video_render.py` suite passed (21 tests), along with `compileall`, `pip check`, and `git diff --check`. No schema or frontend change.
-- [ ] `FLOW-01` — Run the complete flow with permitted media and real integration evidence; mocks alone are insufficient. **Partial / Render blocked.** A fresh verification Project copied the permitted `demo2` source; no source Project was modified. Real ASR/Gemini produced 11 valid Segments, and the TTS Job produced 11 current Artifacts. The timeline has two over-cap blockers at positions 4 and 9 (234 ms and 118 ms) in a 23,340 ms plan. The last authorized optimization Job `3b4f7433-e836-4997-806f-1fcb78de299f` failed with `NoAudioReceived` (no HTTP status); the Segment could not be identified because the then-running logger lacked Segment context. Offline fix now retries this empty-stream exception at most three times, runs optimizer operations sequentially, logs Segment/candidate Artifact/rate/attempt safely, and enforces a finite request budget derived from remaining rates and retry limit. Regression tests cover retry success/exhaustion, permanent errors, sequential attribution, request caps and preservation/atomicity. All 138 backend tests, `compileall`, `pip check`, and `git diff --check` passed. No new live request has been made since the failed authorized Job; existing 11 Artifacts remain current, no render Job/MP4 exists. FLOW-01 remains partial pending approval for one bounded continuation on this Project; render only if reanalysis reports zero blockers.
+### ASR, dịch và chỉnh sửa
 
-## Phase 8 — QA, polish, and final report
+- [x] `ASR-01` — Whisper transcript có timestamp.
+- [x] `LEGACY-01` — Đối chiếu mã tool desktop cũ.
+- [x] `TRANS-01` — Dịch Segment bằng Gemini.
+- [x] `TRANS-02` — Retry và phân loại lỗi dịch.
+- [x] `TRANS-03` — Dịch Bulk-First theo ngữ cảnh.
+- [x] `GEMINI-FIX` — Xử lý model/provider Gemini.
+- [x] `EDIT-01` — Hiển thị transcript và bản dịch.
+- [x] `EDIT-02` — Lưu sửa bản dịch.
+- [x] `EDIT-03` — Kiểm tra bản dịch trước TTS.
 
-- [ ] `UI-03` — Redesign the Project Viewer as a responsive dubbing workspace with accessible transcript navigation and compact timeline controls. **Partial / Pending manual browser acceptance.** Frontend production build and `git diff --check` passed; manual checks at wide desktop, laptop, and mobile sizes remain required.
-- [ ] `QA-01` — Add unit/integration coverage for validation, state, segments, and provider failures.
-- [ ] `QA-02` — Test missing audio/speech, corrupt input, exhausted quota, TTS failure, and FFmpeg failure.
-- [ ] `QA-03` — Measure each stage on the selected demo machine/input and record limits without extrapolation.
-- [ ] `QA-04` — Verify Git excludes secrets/runtime data and cleanup cannot escape the intended job path.
-- [ ] `DOC-01` — Update verified setup, screenshots, demo evidence, and limitations to match the application.
-- [ ] `DEMO-01` — Prepare and rerun the presentation scenario on the selected environment.
+### TTS, timeline và render bản thô
 
-## Recurring weekly work
+- [x] `TTS-01` — Tạo audio theo Segment.
+- [x] `TTS-INCREMENTAL-01` — Tái sử dụng audio còn hợp lệ.
+- [x] `TTS-02` — Timeline dựa trên duration đo được.
+- [x] `TTS-03` — Thử các mức tốc độ TTS có giới hạn.
+- [x] `TTS-04` — Chuẩn hóa khoảng lặng audio.
+- [x] `AV-SYNC-02` — Joint plan và migration đã xác minh.
+- [x] `AV-SYNC-03` — Thực thi kế hoạch FFmpeg với kiểm tra đồng bộ.
+- [x] `TIMELINE-01` — Xử lý xung đột timeline qua chỉnh bản dịch.
+- [x] `RENDER-01` — Render MP4 bản chức năng.
+- [x] `AUDIO-01` — Phối tiếng gốc và giọng lồng tiếng.
+- [x] `RESULT-01` — API preview/download Artifact đúng revision.
 
-- [ ] Create/update the task issue.
-- [ ] Commit and push at least one verified, meaningful increment.
-- [ ] Review the diff and run relevant checks before commit.
-- [ ] Append required AI-use and task-change records.
-- [ ] Create a report from `docs/weekly/TEMPLATE.md` without modifying the template into a specific week's report.
+## Công việc định kỳ
 
-## Unscheduled backlog outside the MVP
+- [ ] Cập nhật issue/task khi bắt đầu việc mới.
+- [ ] Kiểm tra diff, test và ghi bằng chứng thật trước khi kết luận hoàn thành.
+- [ ] Ghi thay đổi vào `docs/CHANGELOG.md` và `docs/AI_USAGE.md` khi phù hợp.
+- [ ] Commit/push tiến độ khi người dùng yêu cầu.
+- [ ] Lập báo cáo tuần từ `docs/weekly/TEMPLATE.md` khi cần.
 
-- [ ] Authentication, authorization, and multiple users.
-- [ ] Payments.
-- [ ] Social-link download or automatic posting.
-- [ ] Voice cloning, lip sync, subtitle OCR, or advanced voice/music separation.
-- [ ] Batch/concurrent processing, advanced timeline editing, or public Internet deployment.
+## Backlog — Chưa đưa vào MVP
 
-Do not implement backlog items without explicit approval.
+- [ ] Đăng nhập, phân quyền và nhiều người dùng.
+- [ ] Thanh toán.
+- [ ] Tải video qua link mạng xã hội và tự đăng bài.
+- [ ] Voice cloning, lip-sync, OCR phụ đề và tách nhạc/giọng nâng cao.
+- [ ] Xử lý hàng loạt/đồng thời, timeline editor nâng cao và public deployment.

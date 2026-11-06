@@ -564,3 +564,29 @@
 - **Verification:** Confirmed the final dated changelog heading is at end of file, AV-SYNC-03 is checked in `TASKS.md`, AV-SYNC-02 is still partial, and the next prerequisite is stated. `git diff --check` passed; implementation tests were not rerun in this documentation-only follow-up.
 - **Result/limits:** Progress tracking is consistent. The recorded 59-test offline result remains the implementation evidence; real Project and PostgreSQL/Supabase verification are outstanding.
 - **Commit/issue:** None recorded by the AI assistant.
+
+## `AV-SYNC-02` — Supabase migration synchronization and schema preparation
+
+- **AI assistance:** Compared local migration files and Git history with Supabase's recorded migrations and live schema. Reconstructed the missing historical metadata migration from the byte-identical backend SQL counterpart after confirming its columns, constraints, foreign key and index effects on the remote schema. Created the timestamped AV-SYNC-02 migration using Supabase CLI and updated task/architecture tracking.
+- **Developer decision:** Prepare and verify local migration files only. Stop before remote DDL; do not change table data, RLS, grants, or application pipeline behavior. Keep AV-SYNC-02 partial until explicit approval and PostgreSQL verification.
+- **Affected areas:** `supabase/migrations/`, `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, and `docs/AI_USAGE.md`.
+- **Verification:** Supabase MCP reported three applied migrations, no `result_json`, the existing rate constraint without 25, zero Artifact rows outside the target rate set, and current table counts. Supabase CLI v3.0.0 created the new migration; fetch/list/dry-run could not connect because the network lacks IPv6. `git diff --check` was run. No application tests or DDL parser were run; the migration was not applied.
+- **Result/limits:** PARTIAL. Local migration versions align with the remote history and the AV-SYNC-02 SQL is prepared, but CLI pending-list/dry-run and PostgreSQL syntax/application verification remain outstanding. The original historical migration body was not fetched. RLS is disabled and public API roles have CRUD grants; no permission changes were made. No commit or issue link.
+
+## `AV-SYNC-02` — Read-only Supabase migration verification and closure
+
+- **AI assistance:** Compared the remote migration history and relevant schema/data invariants with the local AV-SYNC-02 deployment migration; updated task, architecture and append-only progress records to reflect the developer-applied migration.
+- **Developer decision:** The developer applied the SQL in Supabase SQL Editor and synchronized migration history. This verification was strictly read-only; no SQL, migration repair, push/reset, or application-data change was performed.
+- **Affected areas:** `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, and this audit log.
+- **Verification:** Supabase MCP confirmed four recorded migrations, `autodub_jobs.result_json` as `json`, the expected rate constraint, and 1,189 Artifact rows with no out-of-range rate. The 185-test backend suite, `compileall`, `pip check`, and `git diff --check` passed.
+- **Result/limits:** COMPLETE for AV-SYNC-02's migration/schema gate. RLS and existing Data API grants remain a separate security concern; no permission changes were made.
+- **Commit/issue:** None recorded by the AI assistant.
+
+## `FLOW-01` — Read-only integration status review
+
+- **AI assistance:** Reviewed persisted Project, Segment, Job, and Artifact summaries and reconciled the acceptance record with current pipeline boundaries; updated FLOW-01 status and next acceptance step.
+- **Developer decision:** Do not repeat Whisper, Gemini, Edge-TTS, or render work; preserve the verification Project and its current Artifacts. No provider requests or database writes were performed for this review.
+- **Affected areas:** `TASKS.md`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, and this audit log.
+- **Verification:** The verification Project has 11 valid translated Segments, successful persisted Jobs through `render_complete`, 11 audio Artifacts, and one MP4 Artifact with 22,970 ms stored duration metadata. No `av_sync_optimize` Job exists. The 185-test backend suite, `compileall`, `pip check`, and `git diff --check` passed. This pass did not probe the MP4 with FFprobe, request preview/range/download, or perform browser/listening acceptance.
+- **Result/limits:** PARTIAL. Final browser/API result delivery acceptance remains; the historical `NoAudioReceived` upstream cause is unknown and no current timeline blocker count was freshly queried.
+- **Commit/issue:** None recorded by the AI assistant.
